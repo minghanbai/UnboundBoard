@@ -177,7 +177,7 @@ function handleHostDisconnect() {
         updateStatus();
         connections.forEach(c => {
             if (c.open) {
-                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified });
+                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
             }
         });
         broadcastPeerList();
@@ -196,7 +196,7 @@ function startReconnectLoop() {
             console.log("Original Host is back!");
             lastHeartbeat = Date.now();
             if (isTempHost) {
-                rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified });
+                rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
                 isTempHost = false;
                 isHost = false;
                 connections.forEach(c => c.close());
@@ -257,6 +257,7 @@ function handleDataReceived(data, senderConn) {
     if (data.type === 'CHAT') {
         const senderName = data.nickname || "Unknown";
         appendChatMessage(senderName, data.message, false);
+        showToast(`💬 ${senderName}: ${data.message}`, 'chat');
         if (isHost) broadcast(data, senderConn);
         const panel = document.getElementById('side-panel');
         if (panel.classList.contains('hidden') || activeTab !== 'chat') {
@@ -268,7 +269,7 @@ function handleDataReceived(data, senderConn) {
         raisedHands.add(data.peerId);
         const name = data.nickname || nicknames[data.peerId] || "某人";
         nicknames[data.peerId] = name;
-        showToast(`✋  舉手了！`);
+        showToast(`✋ ${name} 舉手了！`);
         renderUserList();
         if (isHost) broadcast(data, senderConn);
     }
@@ -521,6 +522,11 @@ function renderUserList() {
         btnHand.innerText = "✋ 舉手";
         btnHand.classList.remove('active');
     }
+    if (raisedHands.size > 0) {
+        btnHand.classList.add('has-unread');
+    } else {
+        btnHand.classList.remove('has-unread');
+    }
     if (isHost && raisedHands.size > 0) {
         const lowerAllBtn = document.createElement('button');
         lowerAllBtn.innerText = "🙌 全部放下";
@@ -542,19 +548,19 @@ function renderUserList() {
     allPeers.forEach(pid => {
         const div = document.createElement('div');
         div.className = 'user-item';
-        const displayName = nicknames[pid] || pid.substr(0, 8);
-        let html = `<span>`;
+        const displayName = (nicknames[pid] && nicknames[pid].trim()) ? nicknames[pid] : pid.substr(0, 8);
+        let html = `<span>${displayName}`;
         if (pid === targetHostId) html += `<span class="tag tag-host">房主</span>`;
         if (pid === myPeerId) html += `<span class="tag tag-me">我</span>`;
         if (raisedHands.has(pid)) html += ` <span style="font-size:1.2em;">✋</span>`;
         html += `</span>`;
         html += `<div style="display:flex; gap:5px;">`;
         if (isHost && raisedHands.has(pid)) {
-            html += `<button onclick="lowerHand('')" style="font-size:0.8em; padding:2px 5px;">放下</button>`;
+            html += `<button onclick="lowerHand('${pid}')" style="font-size:0.8em; padding:2px 5px;">放下</button>`;
         }
         if (isHost && pid !== myPeerId) {
-            html += `<button onclick="transferHost('')" style="font-size:0.8em; padding:2px 5px;">👑 轉移</button>`;
-            html += `<button onclick="kickMember('')" style="font-size:0.8em; padding:2px 5px; margin-left: 5px; background-color: #dc3545; color: white; border: none; border-radius: 3px;">🚫 踢出</button>`;
+            html += `<button onclick="transferHost('${pid}')" style="font-size:0.8em; padding:2px 5px;">👑 轉移</button>`;
+            html += `<button onclick="kickMember('${pid}')" style="font-size:0.8em; padding:2px 5px; margin-left: 5px; background-color: #dc3545; color: white; border: none; border-radius: 3px;">🚫 踢出</button>`;
         }
         html += `</div>`;
         div.innerHTML = html;

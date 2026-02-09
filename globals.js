@@ -19,6 +19,7 @@ let nicknames = {};
 let raisedHands = new Set();
 let failedCandidates = new Set();
 let roomSettings = { allowRaiseHand: true, allowChat: true, allowEditing: true };
+let toastTimeout = null;
 
 // --- PDF 變數 ---
 let pdfImages = [];
@@ -46,15 +47,32 @@ function setOverlay(show, msg = "") {
     else overlay.classList.add('hidden');
 }
 
-function showToast(msg) {
+function showToast(msg, type = 'normal') {
     const container = document.getElementById('toast-container');
+
+    // 清除舊的計時器
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
+        toastTimeout = null;
+    }
+    
+    // 清空容器，確保只顯示一則 (共用氣泡)
+    container.innerHTML = '';
+
     const div = document.createElement('div');
     div.className = 'toast';
     div.innerText = msg;
+    
+    // 根據類型設定樣式
+    if (type === 'chat') {
+        div.style.backgroundColor = 'rgba(0, 123, 255, 0.9)';
+    }
+
     container.appendChild(div);
-    setTimeout(() => {
-        div.style.opacity = '0';
-        setTimeout(() => div.remove(), 500);
+    
+    // 設定新的計時器 (配合 CSS 動畫時間 3s)
+    toastTimeout = setTimeout(() => {
+        if (div.parentNode) div.remove();
     }, 3000);
 }
 
@@ -67,5 +85,5 @@ function generateNickname() {
     const animals = ['貓咪', '狗狗', '兔子', '狐狸', '熊貓', '老鷹', '獅子', '老虎', '企鵝', '海豚', '無尾熊', '袋鼠', '小鹿', '松鼠'];
     const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
     const animal = animals[Math.floor(Math.random() * animals.length)];
-    return `${adj}`;
+    return `${adj}${animal}`;
 }

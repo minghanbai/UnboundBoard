@@ -8,11 +8,87 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
     <style>
         body { margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; overflow: hidden; }
-        #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: flex; gap: 10px; align-items: center; }
+        #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: none; gap: 10px; align-items: center; }
         #status { margin-left: auto; font-size: 0.9em; color: #666; }
         #canvas-container { flex: 1; background: #f8f9fa; position: relative; }
         button { cursor: pointer; padding: 5px 10px; }
         .active { background: #007bff; color: white; border: none; }
+        #overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 1000; color: white; font-size: 1.5em;
+            pointer-events: auto;
+            backdrop-filter: blur(2px);
+        }
+        .hidden { display: none !important; pointer-events: none !important; }
+        .tag { font-size: 0.8em; padding: 2px 5px; border-radius: 3px; color: white; margin-left: 5px; }
+        .tag-host { background: #ffc107; color: black; }
+        .tag-me { background: #28a745; }
+        #side-panel {
+            position: absolute; bottom: 10px; right: 10px;
+            background: white; border: 1px solid #ccc; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 320px; height: 450px; z-index: 900; border-radius: 5px;
+            display: flex; flex-direction: column;
+        }
+        #panel-header { display: flex; background: #f8f9fa; border-bottom: 1px solid #eee; border-radius: 5px 5px 0 0; }
+        .panel-tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; border-bottom: 2px solid transparent; color: #666; font-weight: bold; }
+        .panel-tab.active { border-bottom: 2px solid #007bff; color: #007bff; background: white; }
+        .panel-close { padding: 0 15px; border: none; background: none; font-size: 1.5em; cursor: pointer; color: #999; }
+        .tab-content { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+        .tab-content.active { display: flex; }
+        #chat-history { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; background: #fff; }
+        #chat-input-area { padding: 15px; border-top: 1px solid #eee; display: flex; gap: 8px; align-items: center; background: #fff; }
+        #chat-input { flex: 1; padding: 10px 15px; border: 1px solid #ddd; border-radius: 20px; background: #f0f2f5; outline: none; }
+        #chat-input:focus { border-color: #007bff; background: #fff; }
+        #btn-chat-send { border-radius: 20px !important; }
+        
+        .chat-msg { display: flex; flex-direction: column; max-width: 75%; margin-bottom: 2px; }
+        .chat-msg.self { align-self: flex-end; align-items: flex-end; }
+        .chat-msg.other { align-self: flex-start; align-items: flex-start; }
+        .chat-name { font-size: 0.75em; color: #65676b; margin-bottom: 4px; margin-left: 12px; }
+        .chat-msg.self .chat-name { display: none; }
+        .chat-bubble { padding: 8px 14px; border-radius: 18px; font-size: 0.95em; line-height: 1.4; word-wrap: break-word; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .chat-msg.self .chat-bubble { background: #007bff; color: white; border-bottom-right-radius: 4px; }
+        .chat-msg.other .chat-bubble { background: #f0f2f5; color: #050505; border-bottom-left-radius: 4px; }
+        .has-unread { position: relative; }
+        .has-unread::after { content: "●"; color: red; position: absolute; top: 0; right: 0; font-size: 10px; }
+        #user-list-content { flex: 1; overflow-y: auto; padding: 0; }
+        .user-item { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        #toast-container {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; flex-direction: column; gap: 10px; z-index: 2000; pointer-events: none;
+        }
+        .toast {
+            background: rgba(0,0,0,0.8); color: white; padding: 10px 20px; border-radius: 20px;
+            font-size: 0.9em; animation: fadeInOut 3s forwards;
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateY(20px); }
+            10% { opacity: 1; transform: translateY(0); }
+            90% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+        #landing-modal {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 2000;
+        }
+        .modal-content {
+            background: white; padding: 30px; border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            text-align: center; width: 300px;
+        }
+        .input-group { margin-bottom: 15px; text-align: left; }
+        .input-group label { display: block; margin-bottom: 5px; color: #666; font-weight: bold; }
+        .input-group input { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; font-size: 1em; }
+        .primary-btn { background: #007bff; color: white; width: 100%; padding: 10px; border: none; border-radius: 4px; font-size: 1.1em; cursor: pointer; }
+        .secondary-btn { background: #6c757d; color: white; width: 100%; padding: 10px; border: none; border-radius: 4px; font-size: 1.1em; cursor: pointer; margin-top: 5px;}
+        .divider { margin: 20px 0; color: #999; font-size: 0.9em; position: relative; }
+        .divider::before, .divider::after { content: ""; position: absolute; top: 50%; width: 40%; height: 1px; background: #eee; }
+        .divider::before { left: 0; }
+        .divider::after { right: 0; }
     </style>
 </head>
 <body>
@@ -21,28 +97,98 @@
     <button onclick="setMode('pencil')" id="btn-pencil">✏️ 畫筆</button>
     <button onclick="setMode('eraser')" id="btn-eraser">🧽 橡皮擦</button>
     <button onclick="setMode('select')" id="btn-select">🖐️ 移動/選取</button>
-    <button onclick="addStickyNote()">📝 便條紙</button>
-    <button onclick="document.getElementById('img-upload').click()">🖼️ 上傳圖片</button>
+    <button onclick="toggleSettings()" id="btn-settings" style="display:none;">⚙️ 設定</button>
+    <button onclick="toggleHand()" id="btn-hand">✋ 舉手</button>
+    <button onclick="toggleSidePanel('users')" id="btn-users">👥 成員</button>
+    <button onclick="toggleSidePanel('chat')" id="btn-chat">💬 聊天</button>
+    <button onclick="addStickyNote()" id="btn-note">📝 便條紙</button>
+    <button onclick="document.getElementById('img-upload').click()" id="btn-img">🖼️ 上傳圖片</button>
     <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
-    <button onclick="clearCanvas()">🗑️ 清空</button>
+    <button onclick="clearCanvas()" id="btn-clear">🗑️ 清空</button>
     <button onclick="copyLink()" style="background: #28a745; color: white; border:none;">🔗 複製分享連結</button>
     <span id="status">正在連線...</span>
 </div>
 
 <div id="canvas-container">
     <canvas id="c"></canvas>
+    <div id="overlay" class="hidden">
+        <div id="overlay-msg">連線中...</div>
+    </div>
+    <div id="toast-container"></div>
+    <div id="side-panel" class="hidden">
+        <div id="panel-header">
+            <div id="tab-chat" class="panel-tab active" onclick="switchTab('chat')">聊天室</div>
+            <div id="tab-users" class="panel-tab" onclick="switchTab('users')">成員</div>
+            <button class="panel-close" onclick="document.getElementById('side-panel').classList.add('hidden')">×</button>
+        </div>
+        <div id="panel-chat" class="tab-content active">
+            <div id="chat-history"></div>
+            <div id="chat-input-area">
+                <input type="text" id="chat-input" placeholder="輸入訊息...">
+                <button onclick="sendChatMessage()" class="primary-btn" style="width:auto; padding: 5px 15px; font-size: 0.9em;" id="btn-chat-send">送出</button>
+            </div>
+        </div>
+        <div id="panel-users" class="tab-content">
+            <div id="user-list-content"></div>
+        </div>
+    </div>
+    <div id="settings-modal" class="hidden" style="position: absolute; top: 50px; left: 10px; background: white; border: 1px solid #ccc; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 15px; width: 200px; z-index: 950; border-radius: 5px;">
+        <h3 style="margin-top:0;">房間設定</h3>
+        <div style="margin-bottom: 10px; display: flex; justify-content: space-between;">
+            <label for="setting-hand">允許舉手</label>
+            <input type="checkbox" id="setting-hand" checked onchange="updateSettings()">
+        </div>
+        <div style="margin-bottom: 10px; display: flex; justify-content: space-between;">
+            <label for="setting-chat">允許聊天</label>
+            <input type="checkbox" id="setting-chat" checked onchange="updateSettings()">
+        </div>
+        <div style="margin-bottom: 10px; display: flex; justify-content: space-between;">
+            <label for="setting-edit">允許編輯</label>
+            <input type="checkbox" id="setting-edit" checked onchange="updateSettings()">
+        </div>
+        <button onclick="toggleSettings()" class="secondary-btn" style="font-size: 0.9em; padding: 5px;">關閉</button>
+    </div>
+    <div id="landing-modal" class="hidden">
+        <div class="modal-content">
+            <h2>Unbound Board</h2>
+            <div class="input-group">
+                <label>您的暱稱</label>
+                <input type="text" id="nickname-input" placeholder="輸入暱稱">
+            </div>
+            <div class="action-group">
+                <button onclick="createRoom()" class="primary-btn">🏠 開新房間</button>
+            </div>
+            <div class="divider">或者</div>
+            <div class="input-group">
+                <label>輸入房間代碼</label>
+                <input type="text" id="room-code-input" placeholder="例如: board-xyz...">
+                <button onclick="joinRoomInput()" class="secondary-btn">➡️ 加入房間</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
     // --- 1. 初始化 Fabric Canvas ---
-    const canvas = new fabric.Canvas('c', {
+    // 強制覆寫 getContext，確保 Fabric 內部建立的所有 Cache Canvas (橡皮擦偵測用) 都啟用 willReadFrequently
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+        if (type === '2d') {
+            attributes = attributes || {};
+            attributes.willReadFrequently = true;
+        }
+        return originalGetContext.call(this, type, attributes);
+    };
+
+    const canvasEl = document.getElementById('c');
+    const canvas = new fabric.Canvas(canvasEl, {
         isDrawingMode: true
     });
     
     // 調整畫布大小為全螢幕
     function resizeCanvas() {
         canvas.setWidth(window.innerWidth);
-        canvas.setHeight(window.innerHeight - 50); // 扣掉 toolbar
+        canvas.setHeight(window.innerHeight - document.getElementById('toolbar').offsetHeight); // 扣掉 toolbar
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
@@ -57,79 +203,327 @@
     let connections = []; // 用於 Host 存所有 Guest 的連線
     let isHost = false;
     let isSyncing = false; // 防止迴圈更新 (接收數據時不觸發發送)
+    
+    let myPeerId = null;
+    let knownPeers = []; // 追蹤房間內所有人的 ID
+    let isTempHost = false; // 是否為臨時房主
+    let lastHeartbeat = Date.now(); // 心跳計時
+    let lastModified = 0; // 畫布最後修改時間 (初始為 0，避免誤判為最新)
+    let pendingAcks = new Map(); // 追蹤未確認的更新 (msgId -> timeout)
+    let retryCount = 0; // 重試計數
+    let reconnectInterval = null; // 重連迴圈計時器
+    let myNickname = "Guest";
+    let nicknames = {}; // ID -> Name
+    let raisedHands = new Set(); // 追蹤舉手的人
+    let roomSettings = { allowRaiseHand: true, allowChat: true, allowEditing: true }; // 房間權限設定
+
+    // UI 提示與鎖定功能
+    function setOverlay(show, msg = "") {
+        const overlay = document.getElementById('overlay');
+        const msgDiv = document.getElementById('overlay-msg');
+        if (msg) msgDiv.innerText = msg;
+        if (show) overlay.classList.remove('hidden');
+        else overlay.classList.add('hidden');
+    }
 
     // 取得網址參數 ID
     const urlParams = new URLSearchParams(window.location.search);
-    const targetPeerId = urlParams.get('id');
+    let targetHostId = urlParams.get('id'); // 改為 let 以便轉移房主
 
     // 生成隨機 ID (如果沒有 ID)
     function generateId() {
         return 'board-' + Math.random().toString(36).substr(2, 9);
     }
 
+    // 檢查是否為原房主 (從 LocalStorage 判斷)
+    const lastHostId = localStorage.getItem('unbound_host_id');
+
+    // --- 暱稱與歡迎頁面邏輯 ---
+    function generateNickname() {
+        const adjectives = ['迅敏', '閃電', '快樂', '幸運', '夢幻', '陽光', '活力', '溫柔', '勇敢', '聰明', '活潑', '可愛', '神奇', '優雅', '熱情'];
+        const animals = ['貓咪', '狗狗', '兔子', '狐狸', '熊貓', '老鷹', '獅子', '老虎', '企鵝', '海豚', '無尾熊', '袋鼠', '小鹿', '松鼠'];
+        const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+        const animal = animals[Math.floor(Math.random() * animals.length)];
+        return `${adj}${animal}`;
+    }
+
+    function createRoom() {
+        const nameInput = document.getElementById('nickname-input').value.trim();
+        myNickname = nameInput || generateNickname();
+        document.getElementById('landing-modal').classList.add('hidden');
+        document.getElementById('toolbar').style.display = 'flex';
+        resizeCanvas();
+        targetHostId = null; // 確保是新房間
+        initializePeer();
+    }
+
+    function joinRoomInput() {
+        const code = document.getElementById('room-code-input').value.trim();
+        if (!code) return alert("請輸入房間代碼");
+        const nameInput = document.getElementById('nickname-input').value.trim();
+        myNickname = nameInput || generateNickname();
+        targetHostId = code;
+        document.getElementById('landing-modal').classList.add('hidden');
+        document.getElementById('toolbar').style.display = 'flex';
+        resizeCanvas();
+        
+        const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + targetHostId;
+        window.history.pushState({path:newUrl},'',newUrl);
+        
+        initializePeer();
+    }
+
     // --- 3. PeerJS 連線邏輯 ---
     
-    if (targetPeerId) {
-        // === 訪客模式 (Guest) ===
-        isHost = false;
-        document.getElementById('status').innerText = "訪客模式：正在連線到房間...";
-        
-        // 訪客也需要一個 ID，但不需要固定
-        peer = new Peer(); 
+    function initializePeer(forceGuest = false) {
+        if (peer) {
+            peer.destroy();
+            peer = null;
+        }
+        if (reconnectInterval) {
+            clearInterval(reconnectInterval);
+            reconnectInterval = null;
+        }
 
-        peer.on('open', (id) => {
-            console.log('My Guest ID:', id);
-            // 連線到 Host
-            conn = peer.connect(targetPeerId);
+        const isReturningHost = !forceGuest && targetHostId && (targetHostId === lastHostId);
 
-            conn.on('open', () => {
-                document.getElementById('status').innerText = "✅ 已連線到房間";
-                // 連線成功後，請求目前畫布狀態
-                conn.send({ type: 'REQUEST_INIT' });
-            });
-
-            conn.on('data', handleDataReceived);
+        if (targetHostId && !isReturningHost) {
+            // === 訪客模式 ===
+            isHost = false;
+            peer = new Peer();
+            setOverlay(true, "正在初始化連線...");
+        } else {
+            // === 房主模式 (新建或回歸) ===
+            isHost = true;
+            const idToUse = isReturningHost ? targetHostId : generateId();
             
-            conn.on('error', (err) => {
-                alert("連線失敗，可能房主已離開或 ID 錯誤");
-            });
-        });
+            if (!isReturningHost) {
+                localStorage.setItem('unbound_host_id', idToUse);
+                // lastModified 保持為 0
+            }
+            
+            peer = new Peer(idToUse);
+        }
 
-    } else {
-        // === 房主模式 (Host) ===
-        isHost = true;
-        const myId = generateId();
-        
-        // 使用特定 ID 初始化
-        peer = new Peer(myId);
+        bindPeerEvents(isReturningHost);
+        applyRoomSettings(); // 初始化時套用設定 (主要是隱藏設定按鈕)
+    }
 
+    function bindPeerEvents(isReturningHost) {
         peer.on('open', (id) => {
-            document.getElementById('status').innerText = "👑 房主模式 (等待連線)";
-            // 更新網址但不重整，方便複製
-            const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + id;
-            window.history.pushState({path:newUrl},'',newUrl);
+            myPeerId = id;
+            console.log('My ID:', id);
+            nicknames[id] = myNickname; // 記錄自己的暱稱
+            retryCount = 0; // 連線成功，重置計數
+
+            if (isHost) {
+                // 嘗試恢復之前的畫布狀態
+                const savedState = localStorage.getItem('unbound_board_state');
+                const savedTime = localStorage.getItem('unbound_last_modified');
+                if (savedState) {
+                    canvas.loadFromJSON(savedState, () => canvas.renderAll());
+                }
+                if (savedTime) {
+                    lastModified = parseInt(savedTime);
+                }
+
+                // 如果是房主回歸，先鎖定畫面，等待臨時房主回傳最新進度
+                if (isReturningHost) {
+                    setOverlay(true, "正在等待同步最新狀態...");
+                    // 設定 4 秒超時，如果沒人傳新資料給我們，就假設我們是最新的並解鎖
+                    setTimeout(() => {
+                        const msgDiv = document.getElementById('overlay-msg');
+                        if (msgDiv && msgDiv.innerText === "正在等待同步最新狀態...") {
+                            setOverlay(false);
+                        }
+                    }, 4000);
+                }
+
+                document.getElementById('status').innerText = "👑 房主模式 (等待連線)";
+                const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + id;
+                window.history.pushState({path:newUrl},'',newUrl);
+            } else {
+                connectToHost(targetHostId);
+                startReconnectLoop(); // 啟動背景重連機制
+            }
         });
 
+        // 監聽連入 (房主、臨時房主都會用到)
         peer.on('connection', (c) => {
-            // 當有人連入
-            connections.push(c);
-            document.getElementById('status').innerText = `👥 目前連線人數: ${connections.length}`;
-            
+            c.on('open', () => {
+                connections.push(c);
+                updateStatus();
+                
+                // 如果我是房主(或臨時)，廣播最新的 Peer List 和畫布
+                if (isHost) {
+                    broadcastPeerList();
+                    c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas), timestamp: lastModified, settings: roomSettings });
+                }
+            });
+
             c.on('data', (data) => handleDataReceived(data, c));
             
             c.on('close', () => {
                 connections = connections.filter(conn => conn !== c);
-                document.getElementById('status').innerText = `👥 目前連線人數: ${connections.length}`;
+                updateStatus();
+                renderUserList(); // 更新名單
+                if (isHost) broadcastPeerList();
             });
+        });
+
+        peer.on('error', (err) => {
+            console.error(err);
+            if(err.type === 'unavailable-id') {
+                if (isHost && isReturningHost) {
+                    if (retryCount < 3) {
+                        retryCount++;
+                        setOverlay(true, `ID 佔用中，正在重試 (${retryCount}/3)...`);
+                        setTimeout(() => initializePeer(false), 1500);
+                    } else {
+                        alert("無法取得房主權限 (ID 仍被佔用)，將轉為訪客模式。");
+                        initializePeer(true); // 強制轉為訪客
+                    }
+                } else {
+                    alert("ID 衝突，請重新整理頁面");
+                }
+            }
         });
     }
 
-    peer.on('error', (err) => {
-        console.error(err);
-        if(err.type === 'unavailable-id') {
-            alert("ID 衝突，請重新整理頁面");
+    // 啟動 Peer
+    if (targetHostId) {
+        // 有 ID (分享連結進入)，直接初始化
+        myNickname = generateNickname(); // 自動分配暱稱
+        document.getElementById('toolbar').style.display = 'flex';
+        resizeCanvas();
+        initializePeer();
+    } else {
+        // 無 ID (直接進入首頁)，顯示登入 Modal
+        document.getElementById('landing-modal').classList.remove('hidden');
+        document.getElementById('nickname-input').value = generateNickname(); // 預填暱稱
+    }
+
+    function connectToHost(hostId) {
+        setOverlay(true, "正在連線到: " + hostId);
+        document.getElementById('status').innerText = "正在連線到: " + hostId;
+        
+        // 清理舊連線與未完成的 ACK
+        if (conn) {
+            conn.off('close'); // 移除監聽，避免手動切換時觸發斷線邏輯
+            conn.close();
         }
-    });
+        pendingAcks.forEach(t => clearTimeout(t));
+        pendingAcks.clear();
+        
+        conn = peer.connect(hostId);
+        
+        conn.on('open', () => {
+            setOverlay(false);
+            document.getElementById('status').innerText = "✅ 已連線";
+            lastHeartbeat = Date.now(); // 重置心跳
+            conn.send({ type: 'REQUEST_INIT' });
+            conn.send({ type: 'HELLO', nickname: myNickname }); // 發送暱稱
+        });
+
+        conn.on('data', (data) => handleDataReceived(data, conn));
+        
+        conn.on('close', () => {
+            setOverlay(true, "❌ 連線中斷");
+            document.getElementById('status').innerText = "❌ 連線中斷";
+            handleHostDisconnect();
+        });
+    }
+
+    // 處理房主斷線：尋找備用房主
+    function handleHostDisconnect() {
+        // 1. 如果已經成功連回原房主，忽略舊連線的斷線事件
+        if (conn && conn.open && conn.peer === targetHostId) return;
+        
+        if (isHost && !isTempHost) return; // 原房主本人不需要處理
+
+        console.log("Host disconnected. Finding backup...");
+        setOverlay(true, "連線中斷，正在尋找備用房主...");
+        
+        // 排除原房主和自己，剩下的 ID 排序
+        const candidates = knownPeers.filter(p => p !== targetHostId && p !== myPeerId).sort();
+        
+        // 如果我是候選人中 ID 最小的 (或是唯一剩下的)，我成為臨時房主
+        if (candidates.length === 0 || myPeerId < candidates[0]) {
+            console.log("Becoming Temp Host");
+            isTempHost = true;
+            isHost = true;
+            
+            // 成為房主後，清除所有等待中的 ACK
+            pendingAcks.forEach(t => clearTimeout(t));
+            pendingAcks.clear();
+            
+            setOverlay(false); // 成為臨時房主，解除鎖定
+            updateStatus();
+            // 2. 立即對已連上的訪客進行同步 (解決競態條件導致的同步遺失)
+            connections.forEach(c => {
+                if (c.open) {
+                    c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas), timestamp: lastModified });
+                }
+            });
+            broadcastPeerList();
+        } else {
+            // 否則連線給備用房主
+            console.log("Connecting to Backup:", candidates[0]);
+            connectToHost(candidates[0]);
+        }
+    }
+
+    // 背景機制：持續嘗試連回原房主
+    function startReconnectLoop() {
+        if (reconnectInterval) clearInterval(reconnectInterval);
+        reconnectInterval = setInterval(() => {
+            // 如果已經連上原房主，什麼都不做
+            if (conn && conn.peer === targetHostId && conn.open) return;
+            
+            const rConn = peer.connect(targetHostId);
+            rConn.on('open', () => {
+                console.log("Original Host is back!");
+                lastHeartbeat = Date.now(); // 重置心跳
+                // 如果我是臨時房主，把最新狀態傳回去
+                if (isTempHost) {
+                    rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas), timestamp: lastModified });
+                    
+                    // 先卸任，避免後續邏輯衝突
+                    isTempHost = false;
+                    isHost = false;
+                    
+                    // 斷開所有臨時連線，讓他們自己重連回原房主
+                    connections.forEach(c => c.close());
+                    connections = [];
+                }
+                
+                // 切換回原房主 (先更新參照再關閉舊連線，避免觸發 handleHostDisconnect 的誤判)
+                const oldConn = conn;
+                conn = rConn; 
+                if (oldConn) oldConn.close();
+                
+                // 清除舊的 ACK 等待
+                pendingAcks.forEach(t => clearTimeout(t));
+                pendingAcks.clear();
+                isSyncing = false; // 重連後強制解鎖同步狀態，避免卡死
+
+                setOverlay(false); // 解除鎖定
+                updateStatus(); // 更新狀態文字並重繪名單 (移除轉移按鈕)
+                
+                // 重新綁定事件
+                conn.on('data', (data) => handleDataReceived(data, conn));
+                conn.on('close', () => {
+                    setOverlay(true, "❌ 連線中斷");
+                    document.getElementById('status').innerText = "❌ 連線中斷";
+                    handleHostDisconnect();
+                });
+                
+                // 主動請求最新狀態
+                conn.send({ type: 'REQUEST_INIT' });
+                conn.send({ type: 'HELLO', nickname: myNickname }); // 補發暱稱
+            });
+        }, 5000); // 每 5 秒嘗試一次
+    }
 
     // --- 4. 數據同步邏輯 (核心) ---
 
@@ -145,46 +539,226 @@
         } else if (conn && conn.open) {
             // 訪客：只發送給房主 (房主會再轉發)
             conn.send(data);
+        } else if (conn && !conn.open) {
+            console.warn("無法發送數據：連線未開啟");
+            // 如果連線存在但未開啟，可能需要提示或處理
+            setOverlay(true, "⚠️ 連線中斷，正在嘗試恢復...");
+            conn.close(); // 觸發重連邏輯
         }
     }
 
     // 處理接收到的數據
     function handleDataReceived(data, senderConn) {
-        isSyncing = true; // 鎖定，避免觸發 'object:added' 事件造成無限迴圈
+        if (data.type === 'HEARTBEAT') {
+            lastHeartbeat = Date.now();
+            return;
+        }
+
+        if (data.type === 'HELLO') {
+            nicknames[senderConn.peer] = data.nickname;
+            if (isHost) broadcastPeerList(); // 房主收到新暱稱後廣播更新
+        }
+        
+        if (data.type === 'UPDATE_ACK') {
+            if (pendingAcks.has(data.msgId)) {
+                clearTimeout(pendingAcks.get(data.msgId));
+                pendingAcks.delete(data.msgId);
+            }
+            return;
+        }
+        
+        if (data.type === 'CHAT') {
+            const senderName = data.nickname || "Unknown";
+            appendChatMessage(senderName, data.message, false);
+            
+            if (isHost) {
+                broadcast(data, senderConn);
+            }
+
+            const panel = document.getElementById('side-panel');
+            if (panel.classList.contains('hidden') || activeTab !== 'chat') {
+                document.getElementById('btn-chat').classList.add('has-unread');
+                if (!panel.classList.contains('hidden')) document.getElementById('tab-chat').classList.add('has-unread');
+            }
+        }
+
+        if (data.type === 'RAISE_HAND') {
+            raisedHands.add(data.peerId);
+            const name = data.nickname || nicknames[data.peerId] || "某人";
+            nicknames[data.peerId] = name; // 確保暱稱同步
+            showToast(`✋ ${name} 舉手了！`);
+            renderUserList();
+            if (isHost) broadcast(data, senderConn);
+        }
+
+        if (data.type === 'LOWER_HAND') {
+            if (data.peerId === 'ALL') {
+                raisedHands.clear();
+                showToast(`房主放下了所有人的手`);
+            } else {
+                raisedHands.delete(data.peerId);
+                // 如果是放下自己的手，不一定要顯示 Toast，避免太吵
+                // 但如果是房主放下別人的手，可以顯示一下
+                // 這裡簡單處理，只更新列表
+            }
+            renderUserList();
+            if (isHost) broadcast(data, senderConn);
+        }
+
+        if (data.type === 'ROOM_SETTINGS_UPDATE') {
+            roomSettings = data.settings;
+            applyRoomSettings();
+            if (isHost) broadcast(data, senderConn); // 臨時房主可能需要轉發? 通常只有房主發送
+        }
 
         if (data.type === 'CANVAS_UPDATE') {
+            // 衝突解決：如果收到的數據明顯比本地舊 (容許 2 秒誤差)，則忽略並回傳本地新版
+            if (data.timestamp && data.timestamp < lastModified - 2000) {
+                console.log("收到舊數據，忽略並回傳本地新版");
+                // 加上 msgId 確保房主會回傳 ACK，並視為正式更新
+                senderConn.send({
+                    type: 'CANVAS_UPDATE',
+                    content: JSON.stringify(canvas),
+                    timestamp: lastModified,
+                    msgId: Date.now() + '-rev-' + Math.random().toString(36).substr(2, 9)
+                });
+                return;
+            }
+
+            if (data.timestamp) lastModified = data.timestamp;
+
+            if (data.settings) {
+                roomSettings = data.settings;
+                applyRoomSettings();
+            }
+
+            isSyncing = true; // 鎖定，避免觸發 'object:added' 事件
+            // 如果我是房主，收到訪客更新需回覆 ACK
+            if (isHost && data.msgId) {
+                senderConn.send({ type: 'UPDATE_ACK', msgId: data.msgId });
+            }
+
             canvas.loadFromJSON(data.content, () => {
                 canvas.renderAll();
                 isSyncing = false; 
+                if (isHost) {
+                    localStorage.setItem('unbound_board_state', data.content);
+                    localStorage.setItem('unbound_last_modified', lastModified);
+                    setOverlay(false); // 收到更新資料後，解除鎖定
+                }
             });
             
             // 如果我是房主，收到 A 的畫圖，要轉發給 B, C, D...
             if (isHost) {
                 broadcast(data, senderConn);
             }
-        } 
-        else if (data.type === 'REQUEST_INIT' && isHost) {
-            // 訪客剛進來，房主發送當前完整狀態
+        }
+        else if (data.type === 'PEER_LIST') {
+            // 更新在線名單
+            knownPeers = data.peers;
+            if (data.raisedHands) raisedHands = new Set(data.raisedHands); // 同步舉手狀態
+            if (data.nicknames) nicknames = data.nicknames; // 同步暱稱表
+            renderUserList(); // 收到新名單後立即刷新介面
+        }
+        else if (data.type === 'REQUEST_INIT') {
+            // 收到請求 (來自新訪客或回歸的原房主)
+            if (isHost) {
             senderConn.send({
                 type: 'CANVAS_UPDATE',
-                content: JSON.stringify(canvas)
+                content: JSON.stringify(canvas),
+                timestamp: lastModified,
+                settings: roomSettings
             });
-            isSyncing = false;
+            broadcastPeerList();
+            }
         }
         else if (data.type === 'CLEAR') {
+            isSyncing = true; // 鎖定
             canvas.clear();
             canvas.backgroundColor = "#f8f9fa"; // 保持背景色
+            if (isHost) localStorage.removeItem('unbound_board_state');
+            if (isHost) localStorage.removeItem('unbound_last_modified');
             if (isHost) broadcast(data, senderConn);
             isSyncing = false;
         }
+        else if (data.type === 'KICK') {
+            alert("您已被房主踢出房間。");
+            window.location.href = window.location.pathname; // 回到首頁
+            return;
+        }
+        else if (data.type === 'HOST_CHANGED') {
+            // 房主已轉移
+            console.log("Host changed to:", data.newHostId);
+            targetHostId = data.newHostId;
+            
+            // 更新網址
+            const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + targetHostId;
+            window.history.pushState({path:newUrl},'',newUrl);
+
+            if (myPeerId === targetHostId) {
+                // 我是新房主
+                isHost = true;
+                localStorage.setItem('unbound_host_id', myPeerId); // 記住我是新房主
+                updateStatus();
+            } else {
+                // 我是訪客，連線到新房主
+                connectToHost(targetHostId);
+            }
+        }
+    }
+
+    function broadcastPeerList() {
+        const list = connections.map(c => c.peer);
+        list.push(myPeerId);
+        knownPeers = list; // 房主也要更新自己的名單
+        broadcast({ type: 'PEER_LIST', peers: list, nicknames: nicknames, raisedHands: Array.from(raisedHands) });
+        renderUserList(); // 房主刷新介面
+    }
+
+    function updateStatus() {
+        const role = isTempHost ? "⚠️ 臨時房主" : (isHost ? "👑 房主" : "訪客");
+        document.getElementById('status').innerText = `${role} | 線上: ${connections.length + (isHost?0:1)}`;
+        renderUserList();
+        applyRoomSettings(); // 權限變更時重新套用設定
     }
 
     // --- 5. 監聽畫布事件 (觸發同步) ---
     
-    const sendUpdate = () => {
+    const sendUpdate = (arg) => {
         if (!isSyncing) {
             const json = JSON.stringify(canvas);
-            broadcast({ type: 'CANVAS_UPDATE', content: json });
+            lastModified = Date.now(); // 更新時間戳
+            if (isHost) localStorage.setItem('unbound_board_state', json);
+            if (isHost) localStorage.setItem('unbound_last_modified', lastModified);
+            
+            const payload = { type: 'CANVAS_UPDATE', content: json, timestamp: lastModified };
+            
+            if (!isHost) {
+                // 訪客增加 ACK 確認機制
+                const msgId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                payload.msgId = msgId;
+                
+                // 動態計算超時時間：基礎 600ms + 每 1KB 增加 2ms
+                // 這樣繪圖（數據小）會很快偵測斷線，圖片（數據大）會給予更多寬限時間
+                let timeoutDuration = 600 + (json.length / 500);
+                
+                // 如果有傳入明確的數值 (例如上傳圖片時強制指定)，則取較大者
+                if (typeof arg === 'number') {
+                    timeoutDuration = Math.max(timeoutDuration, arg);
+                }
+
+                const timeout = setTimeout(() => {
+                    if (pendingAcks.has(msgId)) {
+                        console.warn("同步逾時，房主無回應:", msgId);
+                        setOverlay(true, "⚠️ 同步失敗，正在重連...");
+                        if (conn) conn.close(); // 強制斷線以觸發重連邏輯
+                        pendingAcks.delete(msgId);
+                    }
+                }, timeoutDuration); 
+                pendingAcks.set(msgId, timeout);
+            }
+            
+            broadcast(payload);
         }
     };
 
@@ -200,6 +774,9 @@
     let isMouseDown = false;
 
     function setMode(mode) {
+        // 如果不是房主且被禁止編輯，則無法切換到編輯模式
+        if (!isHost && !roomSettings.allowEditing && mode !== 'select') return;
+
         currentMode = mode;
         
         // 重置按鈕樣式
@@ -254,6 +831,7 @@
     });
 
     function addStickyNote() {
+        if (!isHost && !roomSettings.allowEditing) return;
         const note = new fabric.Textbox('雙擊編輯', {
             left: Math.random() * (canvas.width - 200) + 50,
             top: Math.random() * (canvas.height - 200) + 50,
@@ -269,6 +847,7 @@
     }
 
     function handleImageUpload(input) {
+        if (!isHost && !roomSettings.allowEditing) return;
         const file = input.files[0];
         if (!file) return;
 
@@ -288,7 +867,7 @@
                 canvas.add(img);
                 canvas.setActiveObject(img);
                 setMode('select'); // 自動切換到選取模式
-                sendUpdate();
+                sendUpdate(3000); // 圖片較大，給予 3 秒寬限
             });
         };
         reader.readAsDataURL(file);
@@ -296,8 +875,11 @@
     }
 
     function clearCanvas() {
+        if (!isHost && !roomSettings.allowEditing) return;
         canvas.clear();
         canvas.backgroundColor = "#f8f9fa"; // 保持背景色
+        lastModified = Date.now(); // 清空也算一種修改
+        if (isHost) localStorage.removeItem('unbound_board_state');
         broadcast({ type: 'CLEAR' });
     }
 
@@ -308,8 +890,405 @@
         });
     }
 
+    // --- 8. 成員名單與房主轉移 ---
+    // (toggleUserList 已移除，改用 toggleSidePanel)
+
+    function renderUserList() {
+        const container = document.getElementById('user-list-content');
+        container.innerHTML = ''; // 清空內容
+
+        // 更新舉手按鈕狀態 (反映舉手/放下兩個狀態)
+        const btnHand = document.getElementById('btn-hand');
+        if (raisedHands.has(myPeerId)) {
+            btnHand.innerText = "🙌 放下";
+            btnHand.classList.add('active');
+        } else {
+            btnHand.innerText = "✋ 舉手";
+            btnHand.classList.remove('active');
+        }
+
+        // 房主功能：全部放下
+        if (isHost && raisedHands.size > 0) {
+            const lowerAllBtn = document.createElement('button');
+            lowerAllBtn.innerText = "🙌 全部放下";
+            lowerAllBtn.className = "secondary-btn";
+            lowerAllBtn.style.margin = "10px";
+            lowerAllBtn.style.width = "calc(100% - 20px)";
+            lowerAllBtn.style.padding = "5px";
+            lowerAllBtn.onclick = () => lowerHand('ALL');
+            container.appendChild(lowerAllBtn);
+        }
+        
+        // 確保名單包含自己
+        let allPeers = [...knownPeers];
+        if (!allPeers.includes(myPeerId)) allPeers.push(myPeerId);
+        
+        // 排序：房主最前，自己次之
+        allPeers.sort((a, b) => {
+            if (a === targetHostId) return -1;
+            if (b === targetHostId) return 1;
+            if (a === myPeerId) return -1;
+            return 0;
+        });
+
+        allPeers.forEach(pid => {
+            const div = document.createElement('div');
+            div.className = 'user-item';
+            const displayName = nicknames[pid] || pid.substr(0, 8);
+            let html = `<span>${displayName}`;
+            if (pid === targetHostId) html += `<span class="tag tag-host">房主</span>`;
+            if (pid === myPeerId) html += `<span class="tag tag-me">我</span>`;
+            
+            // 顯示舉手圖示
+            if (raisedHands.has(pid)) {
+                html += ` <span style="font-size:1.2em;">✋</span>`;
+            }
+            html += `</span>`;
+            
+            html += `<div style="display:flex; gap:5px;">`;
+            // 房主功能：放下手
+            if (isHost && raisedHands.has(pid)) {
+                html += `<button onclick="lowerHand('${pid}')" style="font-size:0.8em; padding:2px 5px;">放下</button>`;
+            }
+            // 房主功能：轉移權限 (不能轉給自己)
+            if (isHost && pid !== myPeerId) {
+                html += `<button onclick="transferHost('${pid}')" style="font-size:0.8em; padding:2px 5px;">👑 轉移</button>`;
+                html += `<button onclick="kickMember('${pid}')" style="font-size:0.8em; padding:2px 5px; margin-left: 5px; background-color: #dc3545; color: white; border: none; border-radius: 3px;">🚫 踢出</button>`;
+            }
+            html += `</div>`;
+
+            div.innerHTML = html;
+            container.appendChild(div);
+        });
+    }
+
+    function transferHost(newHostId) {
+        if (!confirm("確定要將房主權限轉移給這位使用者嗎？")) return;
+        
+        // 廣播新房主 ID
+        broadcast({ type: 'HOST_CHANGED', newHostId: newHostId });
+        
+        // 自己降級為訪客並連線
+        isHost = false;
+        targetHostId = newHostId;
+        localStorage.removeItem('unbound_host_id'); // 移除房主紀錄
+        
+        // 更新網址
+        const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + targetHostId;
+        window.history.pushState({path:newUrl},'',newUrl);
+        
+        connectToHost(targetHostId);
+    }
+
+    function kickMember(targetId) {
+        if (!confirm("確定要踢出這位成員嗎？")) return;
+        
+        const connToKick = connections.find(c => c.peer === targetId);
+        if (connToKick) {
+            connToKick.send({ type: 'KICK' });
+            // 延遲關閉連線，確保訊息送出
+            setTimeout(() => connToKick.close(), 500);
+        }
+    }
+
+    // --- 舉手功能 ---
+    function toggleHand() {
+        if (!isHost && !roomSettings.allowRaiseHand) return alert("房主已關閉舉手功能");
+        // 如果已經舉手，則放下 (Toggle)
+        if (raisedHands.has(myPeerId)) {
+            const data = { type: 'LOWER_HAND', peerId: myPeerId };
+            handleDataReceived(data, null); // 本地更新
+            broadcast(data);
+        } else {
+            const data = { type: 'RAISE_HAND', peerId: myPeerId, nickname: myNickname };
+            handleDataReceived(data, null); // 本地更新
+            broadcast(data);
+        }
+    }
+
+    function lowerHand(targetId) {
+        // 僅房主可呼叫此函式來放下別人的手
+        const data = { type: 'LOWER_HAND', peerId: targetId };
+        handleDataReceived(data, null); // 本地更新
+        broadcast(data);
+    }
+
+    function showToast(msg) {
+        const container = document.getElementById('toast-container');
+        const div = document.createElement('div');
+        div.className = 'toast';
+        div.innerText = msg;
+        container.appendChild(div);
+        // 3秒後自動消失
+        setTimeout(() => {
+            div.style.opacity = '0';
+            setTimeout(() => div.remove(), 500);
+        }, 3000);
+    }
+
+    // --- 9. 聊天室功能 ---
+    let activeTab = 'chat';
+
+    function toggleSidePanel(tab) {
+        const panel = document.getElementById('side-panel');
+        if (panel.classList.contains('hidden')) {
+            panel.classList.remove('hidden');
+            switchTab(tab);
+        } else {
+            if (activeTab === tab) {
+                panel.classList.add('hidden');
+            } else {
+                switchTab(tab);
+            }
+        }
+    }
+
+    function switchTab(tab) {
+        activeTab = tab;
+        document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+        document.getElementById('tab-' + tab).classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('panel-' + tab).classList.add('active');
+
+        if (tab === 'chat') {
+            document.getElementById('btn-chat').classList.remove('has-unread');
+            document.getElementById('tab-chat').classList.remove('has-unread');
+            setTimeout(() => document.getElementById('chat-input').focus(), 100);
+        }
+    }
+
+    function sendChatMessage() {
+        if (!isHost && !roomSettings.allowChat) return alert("房主已關閉聊天功能");
+        const input = document.getElementById('chat-input');
+        const message = input.value.trim();
+        if (!message) return;
+
+        const data = {
+            type: 'CHAT',
+            message: message,
+            senderId: myPeerId,
+            nickname: myNickname,
+            timestamp: Date.now()
+        };
+
+        appendChatMessage(myNickname, message, true);
+        broadcast(data);
+        input.value = '';
+    }
+
+    function appendChatMessage(senderName, message, isSelf) {
+        const history = document.getElementById('chat-history');
+        const div = document.createElement('div');
+        div.className = isSelf ? 'chat-msg self' : 'chat-msg other';
+        
+        const nameSpan = document.createElement('div');
+        nameSpan.className = 'chat-name';
+        nameSpan.innerText = senderName;
+        
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble';
+        bubble.innerText = message;
+
+        div.appendChild(nameSpan);
+        div.appendChild(bubble);
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
+    }
+
+    // Bind Enter key
+    document.getElementById('chat-input').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            sendChatMessage();
+        }
+    });
+
+    // --- 10. 房間設定功能 ---
+    function toggleSettings() {
+        const modal = document.getElementById('settings-modal');
+        modal.classList.toggle('hidden');
+        // 同步 UI 狀態
+        document.getElementById('setting-hand').checked = roomSettings.allowRaiseHand;
+        document.getElementById('setting-chat').checked = roomSettings.allowChat;
+        document.getElementById('setting-edit').checked = roomSettings.allowEditing;
+    }
+
+    function updateSettings() {
+        if (!isHost) return;
+        roomSettings.allowRaiseHand = document.getElementById('setting-hand').checked;
+        roomSettings.allowChat = document.getElementById('setting-chat').checked;
+        roomSettings.allowEditing = document.getElementById('setting-edit').checked;
+        
+        broadcast({ type: 'ROOM_SETTINGS_UPDATE', settings: roomSettings });
+        applyRoomSettings(); // 房主自己也要更新 UI (雖然房主不受限，但可能需要視覺回饋或保持一致)
+    }
+
+    function applyRoomSettings() {
+        // 1. 設定按鈕可見性 (僅房主可見)
+        const btnSettings = document.getElementById('btn-settings');
+        if (isHost) {
+            btnSettings.style.display = 'inline-block';
+        } else {
+            btnSettings.style.display = 'none';
+            document.getElementById('settings-modal').classList.add('hidden'); // 強制關閉設定視窗
+        }
+
+        // 2. 根據身分與設定套用限制
+        // 如果是房主，所有功能都啟用 (忽略 roomSettings)
+        // 如果是訪客，則依據 roomSettings
+        const canEdit = isHost || roomSettings.allowEditing;
+        const canChat = isHost || roomSettings.allowChat;
+        const canHand = isHost || roomSettings.allowRaiseHand;
+
+        // 編輯權限控制
+        const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-clear'];
+        editBtns.forEach(id => {
+            const btn = document.getElementById(id);
+            if(btn) btn.disabled = !canEdit;
+        });
+
+        if (!canEdit) {
+            // 強制退出編輯模式
+            canvas.isDrawingMode = false;
+            canvas.selection = false;
+            canvas.forEachObject(o => o.selectable = false);
+            canvas.discardActiveObject();
+            canvas.requestRenderAll();
+            document.getElementById('btn-pencil').classList.remove('active');
+            document.getElementById('btn-eraser').classList.remove('active');
+            document.getElementById('btn-select').classList.remove('active');
+        }
+
+        // 聊天與舉手按鈕控制
+        document.getElementById('btn-chat-send').disabled = !canChat;
+        document.getElementById('btn-hand').disabled = !canHand;
+    }
+
     // 初始 UI 狀態
     setMode('pencil');
+
+    // --- 7. 心跳機制 (Heartbeat) ---
+    setInterval(() => {
+        if (isHost) {
+            // 房主：定期發送心跳
+            broadcast({ type: 'HEARTBEAT' });
+        } else {
+            // 訪客：檢查心跳是否超時
+            if (conn && conn.open) {
+                // 如果超過 5 秒沒收到心跳，判定斷線
+                if (Date.now() - lastHeartbeat > 5000) {
+                    console.warn("心跳超時，判定房主斷線");
+                    setOverlay(true, "⚠️ 連線不穩定，嘗試重連中...");
+                    conn.close(); // 這會觸發 conn.on('close') -> handleHostDisconnect
+                }
+            }
+        }
+    }, 2000); // 每 2 秒檢查一次
+
+</script>
+</body>
+</html>
+        const nameSpan = document.createElement('div');
+        nameSpan.className = 'chat-name';
+        nameSpan.innerText = senderName;
+        
+        const textSpan = document.createElement('div');
+        textSpan.className = 'chat-text';
+        textSpan.innerText = message;
+
+        div.appendChild(nameSpan);
+        div.appendChild(textSpan);
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
+    }
+
+    // Bind Enter key
+    document.getElementById('chat-input').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            sendChatMessage();
+        }
+    });
+
+    // --- 10. 房間設定功能 ---
+    function toggleSettings() {
+        const modal = document.getElementById('settings-modal');
+        modal.classList.toggle('hidden');
+        // 同步 UI 狀態
+        document.getElementById('setting-hand').checked = roomSettings.allowRaiseHand;
+        document.getElementById('setting-chat').checked = roomSettings.allowChat;
+        document.getElementById('setting-edit').checked = roomSettings.allowEditing;
+    }
+
+    function updateSettings() {
+        if (!isHost) return;
+        roomSettings.allowRaiseHand = document.getElementById('setting-hand').checked;
+        roomSettings.allowChat = document.getElementById('setting-chat').checked;
+        roomSettings.allowEditing = document.getElementById('setting-edit').checked;
+        
+        broadcast({ type: 'ROOM_SETTINGS_UPDATE', settings: roomSettings });
+        applyRoomSettings(); // 房主自己也要更新 UI (雖然房主不受限，但可能需要視覺回饋或保持一致)
+    }
+
+    function applyRoomSettings() {
+        // 1. 設定按鈕可見性 (僅房主可見)
+        const btnSettings = document.getElementById('btn-settings');
+        if (isHost) {
+            btnSettings.style.display = 'inline-block';
+        } else {
+            btnSettings.style.display = 'none';
+            document.getElementById('settings-modal').classList.add('hidden'); // 強制關閉設定視窗
+        }
+
+        // 2. 根據身分與設定套用限制
+        // 如果是房主，所有功能都啟用 (忽略 roomSettings)
+        // 如果是訪客，則依據 roomSettings
+        const canEdit = isHost || roomSettings.allowEditing;
+        const canChat = isHost || roomSettings.allowChat;
+        const canHand = isHost || roomSettings.allowRaiseHand;
+
+        // 編輯權限控制
+        const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-clear'];
+        editBtns.forEach(id => {
+            const btn = document.getElementById(id);
+            if(btn) btn.disabled = !canEdit;
+        });
+
+        if (!canEdit) {
+            // 強制退出編輯模式
+            canvas.isDrawingMode = false;
+            canvas.selection = false;
+            canvas.forEachObject(o => o.selectable = false);
+            canvas.discardActiveObject();
+            canvas.requestRenderAll();
+            document.getElementById('btn-pencil').classList.remove('active');
+            document.getElementById('btn-eraser').classList.remove('active');
+            document.getElementById('btn-select').classList.remove('active');
+        }
+
+        // 聊天與舉手按鈕控制
+        document.getElementById('btn-chat-send').disabled = !canChat;
+        document.getElementById('btn-hand').disabled = !canHand;
+    }
+
+    // 初始 UI 狀態
+    setMode('pencil');
+
+    // --- 7. 心跳機制 (Heartbeat) ---
+    setInterval(() => {
+        if (isHost) {
+            // 房主：定期發送心跳
+            broadcast({ type: 'HEARTBEAT' });
+        } else {
+            // 訪客：檢查心跳是否超時
+            if (conn && conn.open) {
+                // 如果超過 5 秒沒收到心跳，判定斷線
+                if (Date.now() - lastHeartbeat > 5000) {
+                    console.warn("心跳超時，判定房主斷線");
+                    setOverlay(true, "⚠️ 連線不穩定，嘗試重連中...");
+                    conn.close(); // 這會觸發 conn.on('close') -> handleHostDisconnect
+                }
+            }
+        }
+    }, 2000); // 每 2 秒檢查一次
 
 </script>
 </body>

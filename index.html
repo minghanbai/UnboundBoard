@@ -19,7 +19,11 @@
 
 <div id="toolbar">
     <button onclick="setMode('pencil')" id="btn-pencil">✏️ 畫筆</button>
+    <button onclick="setMode('eraser')" id="btn-eraser">🧽 橡皮擦</button>
     <button onclick="setMode('select')" id="btn-select">🖐️ 移動/選取</button>
+    <button onclick="addStickyNote()">📝 便條紙</button>
+    <button onclick="document.getElementById('img-upload').click()">🖼️ 上傳圖片</button>
+    <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
     <button onclick="clearCanvas()">🗑️ 清空</button>
     <button onclick="copyLink()" style="background: #28a745; color: white; border:none;">🔗 複製分享連結</button>
     <span id="status">正在連線...</span>
@@ -187,19 +191,108 @@
     // 監聽畫完一筆、物件移動、變形
     canvas.on('path:created', sendUpdate);
     canvas.on('object:modified', sendUpdate);
+    canvas.on('object:removed', sendUpdate);
+    canvas.on('text:editing:exited', sendUpdate);
     
     // --- 6. UI 功能 ---
 
+    let currentMode = 'pencil';
+    let isMouseDown = false;
+
     function setMode(mode) {
+        currentMode = mode;
+        
+        // 重置按鈕樣式
+        document.getElementById('btn-pencil').classList.remove('active');
+        document.getElementById('btn-select').classList.remove('active');
+        document.getElementById('btn-eraser').classList.remove('active');
+        
+        // 重置 Canvas 狀態
+        canvas.isDrawingMode = false;
+        canvas.selection = false;
+        canvas.defaultCursor = 'default';
+        canvas.forEachObject(o => {
+            o.selectable = true;
+            o.perPixelTargetFind = false; // 預設使用 Bounding Box，方便選取
+        });
+
         if (mode === 'pencil') {
             canvas.isDrawingMode = true;
             document.getElementById('btn-pencil').classList.add('active');
-            document.getElementById('btn-select').classList.remove('active');
-        } else {
-            canvas.isDrawingMode = false;
-            document.getElementById('btn-pencil').classList.remove('active');
+        } 
+        else if (mode === 'select') {
             document.getElementById('btn-select').classList.add('active');
+            canvas.selection = true;
         }
+        else if (mode === 'eraser') {
+            document.getElementById('btn-eraser').classList.add('active');
+            canvas.defaultCursor = 'crosshair';
+            canvas.forEachObject(o => {
+                o.selectable = false;
+                o.perPixelTargetFind = true; // 開啟像素級偵測，只在碰到線條時觸發
+                o.targetFindTolerance = 4;   // 增加一點容錯範圍，讓細線比較好擦
+            });
+            canvas.discardActiveObject();
+            canvas.requestRenderAll();
+        }
+    }
+
+    // 橡皮擦事件監聽
+    canvas.on('mouse:down', (opt) => {
+        isMouseDown = true;
+        if (currentMode === 'eraser' && opt.target) {
+            canvas.remove(opt.target);
+        }
+    });
+    canvas.on('mouse:up', () => {
+        isMouseDown = false;
+    });
+    canvas.on('mouse:move', (opt) => {
+        if (currentMode === 'eraser' && isMouseDown && opt.target) {
+            canvas.remove(opt.target);
+        }
+    });
+
+    function addStickyNote() {
+        const note = new fabric.Textbox('雙擊編輯', {
+            left: Math.random() * (canvas.width - 200) + 50,
+            top: Math.random() * (canvas.height - 200) + 50,
+            width: 150,
+            fontSize: 20,
+            backgroundColor: '#ffeb3b', // 黃色便條紙
+            splitByGrapheme: true
+        });
+        canvas.add(note);
+        canvas.setActiveObject(note);
+        setMode('select'); // 切換到選取模式以便編輯
+        sendUpdate();
+    }
+
+    function handleImageUpload(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            fabric.Image.fromURL(e.target.result, function(img) {
+                // 限制圖片初始大小，避免過大佔滿螢幕
+                const maxSize = 300;
+                const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+                
+                img.set({
+                    left: Math.random() * (canvas.width - 200) + 50,
+                    top: Math.random() * (canvas.height - 200) + 50,
+                    scaleX: scale,
+                    scaleY: scale
+                });
+                canvas.add(img);
+                canvas.setActiveObject(img);
+                setMode('select'); // 自動切換到選取模式
+                sendUpdate();
+            });
+        };
+        reader.readAsDataURL(file);
+        input.value = ''; // 清空以允許重複上傳相同檔案
     }
 
     function clearCanvas() {

@@ -123,6 +123,11 @@ function setGridBackground() {
 
 setGridBackground(); // 初始化背景
 
+// 確保物件擁有唯一 ID
+function assignUid(obj) {
+    if (!obj.uid) obj.uid = generateId();
+}
+
 function setMode(mode) {
     if (!isHost && !roomSettings.allowEditing && mode !== 'select') return;
     currentMode = mode;
@@ -187,14 +192,40 @@ canvas.on('mouse:down', (opt) => {
         return;
     }
     if (currentMode === 'eraser' && opt.target && opt.target.type === 'path') {
+        // 橡皮擦：移除物件
         canvas.remove(opt.target);
+        canvas.requestRenderAll();
+        if (typeof sendObjectUpdate === 'function') sendObjectUpdate('remove', opt.target);
     }
 });
 canvas.on('mouse:up', () => { isMouseDown = false; });
 canvas.on('mouse:move', (opt) => {
     if (currentMode === 'eraser' && isMouseDown && opt.target && opt.target.type === 'path') {
         canvas.remove(opt.target);
+        canvas.requestRenderAll();
+        if (typeof sendObjectUpdate === 'function') sendObjectUpdate('remove', opt.target);
     }
+});
+
+// 監聽增量更新事件
+canvas.on('path:created', (e) => {
+    assignUid(e.path);
+    if (typeof sendObjectUpdate === 'function') sendObjectUpdate('add', e.path);
+});
+
+canvas.on('object:modified', (e) => {
+    // 處理多選移動的情況
+    if (e.target.type === 'activeSelection') {
+        e.target.getObjects().forEach(obj => {
+            if (typeof sendObjectUpdate === 'function') sendObjectUpdate('modify', obj);
+        });
+    } else {
+        if (typeof sendObjectUpdate === 'function') sendObjectUpdate('modify', e.target);
+    }
+});
+
+canvas.on('text:editing:exited', (e) => {
+    if (typeof sendObjectUpdate === 'function') sendObjectUpdate('modify', e.target);
 });
 
 function addStickyNote() {
@@ -207,10 +238,11 @@ function addStickyNote() {
         backgroundColor: '#ffeb3b',
         splitByGrapheme: true
     });
+    assignUid(note);
     canvas.add(note);
     canvas.setActiveObject(note);
     setMode('select');
-    if (typeof sendUpdate === 'function') sendUpdate();
+    if (typeof sendObjectUpdate === 'function') sendObjectUpdate('add', note);
 }
 
 function deleteSelectedObject() {
@@ -219,9 +251,11 @@ function deleteSelectedObject() {
     if (activeObjects.length) {
         if (activeObjects[0].isEditing) return;
         canvas.discardActiveObject();
-        activeObjects.forEach(obj => canvas.remove(obj));
+        activeObjects.forEach(obj => {
+            canvas.remove(obj);
+            if (typeof sendObjectUpdate === 'function') sendObjectUpdate('remove', obj);
+        });
         canvas.requestRenderAll();
-        if (typeof sendUpdate === 'function') sendUpdate();
     }
     document.getElementById('context-menu').style.display = 'none';
 }
@@ -249,10 +283,11 @@ function handleImageUpload(input) {
                 scaleX: scale,
                 scaleY: scale
             });
+            assignUid(img);
             canvas.add(img);
             canvas.setActiveObject(img);
             setMode('select');
-            if (typeof sendUpdate === 'function') sendUpdate(3000);
+            if (typeof sendObjectUpdate === 'function') sendObjectUpdate('add', img);
         });
     };
     reader.readAsDataURL(file);
@@ -263,7 +298,7 @@ function changePdfPage(offset) {
     const newIndex = currentPdfPage + offset;
     if (newIndex < 0 || newIndex >= pdfImages.length) return;
     if (currentPdfPage >= 0) {
-        pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground']));
+        pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid']));
     }
     currentPdfPage = newIndex;
     loadPdfPage();
@@ -274,7 +309,8 @@ function loadPdfPage() {
     isSyncing = true;
     const onLoaded = () => {
         isSyncing = false;
-        if (typeof sendUpdate === 'function') sendUpdate();
+        // 切換頁面屬於大幅變動，使用全量更新較安全
+        if (typeof sendFullSync === 'function') sendFullSync();
     };
     if (pdfCanvasStates[currentPdfPage]) {
         canvas.loadFromJSON(pdfCanvasStates[currentPdfPage], () => {
@@ -293,6 +329,7 @@ function loadPdfPage() {
                 scaleX: 1, scaleY: 1, selectable: false, evented: false,
                 isPdfBackground: true
             });
+            assignUid(img);
             canvas.add(img);
             canvas.sendToBack(img);
             fitPdfToWindow(img);
@@ -354,6 +391,7 @@ async function handlePdfUpload(input) {
 
 function clearCanvas() {
     if (!isHost && !roomSettings.allowEditing) return;
+    isSyncing = true; // 鎖定，避免觸發個別的 remove 事件
     canvas.clear();
     setGridBackground(); // 恢復定位點背景
     canvas.setZoom(1);
@@ -361,6 +399,7 @@ function clearCanvas() {
     lastModified = Date.now();
     if (isHost) localStorage.removeItem('unbound_board_state');
     if (typeof broadcast === 'function') broadcast({ type: 'CLEAR' });
+    isSyncing = false;
 }
 
 function copyLink() {

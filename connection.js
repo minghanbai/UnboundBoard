@@ -72,7 +72,7 @@ function bindPeerEvents(isReturningHost) {
             updateStatus();
             if (isHost) {
                 broadcastPeerList();
-                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground'])), timestamp: lastModified, settings: roomSettings });
+                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
             }
         });
         c.on('data', (data) => handleDataReceived(data, c));
@@ -177,7 +177,7 @@ function handleHostDisconnect() {
         updateStatus();
         connections.forEach(c => {
             if (c.open) {
-                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground'])), timestamp: lastModified });
+                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified });
             }
         });
         broadcastPeerList();
@@ -196,7 +196,7 @@ function startReconnectLoop() {
             console.log("Original Host is back!");
             lastHeartbeat = Date.now();
             if (isTempHost) {
-                rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground'])), timestamp: lastModified });
+                rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified });
                 isTempHost = false;
                 isHost = false;
                 connections.forEach(c => c.close());
@@ -287,17 +287,77 @@ function handleDataReceived(data, senderConn) {
         applyRoomSettings();
         if (isHost) broadcast(data, senderConn);
     }
-    if (data.type === 'CANVAS_UPDATE') {
+    
+    // --- 增量更新處理 ---
+    if (data.type === 'CANVAS_OP') {
+        isSyncing = true; // 鎖定，避免套用更新時觸發本地事件
+        
+        if (data.action === 'add') {
+            fabric.util.enlivenObjects([JSON.parse(data.content)], (objs) => {
+                objs.forEach(o => canvas.add(o));
+                canvas.requestRenderAll();
+            });
+        } 
+        else if (data.action === 'modify') {
+            const obj = canvas.getObjects().find(o => o.uid === data.uid);
+            if (obj) {
+                const props = JSON.parse(data.content);
+                obj.set(props);
+                obj.setCoords(); // 更新座標感應區
+                canvas.requestRenderAll();
+            }
+        } 
+        else if (data.action === 'remove') {
+            const obj = canvas.getObjects().find(o => o.uid === data.uid);
+            if (obj) {
+                canvas.remove(obj);
+                canvas.requestRenderAll();
+            }
+        }
+        
+        if (isHost) {
+            // 房主轉發給其他人
+            broadcast(data, senderConn);
+        }
+        isSyncing = false;
+    }
+    else if (data.type === 'CANVAS_UPDATE') {
         if (data.timestamp && data.timestamp < lastModified - 2000) {
             console.log("收到舊數據，忽略並回傳本地新版");
             senderConn.send({
                 type: 'CANVAS_UPDATE',
-                content: JSON.stringify(canvas.toJSON(['isPdfBackground'])),
+                content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])),
                 timestamp: lastModified,
                 msgId: Date.now() + '-rev-' + Math.random().toString(36).substr(2, 9)
             });
             return;
         }
+
+        // 防護機制：若房主當前有 PDF 背景，但收到的更新中沒有 PDF 背景 (且非 CLEAR 指令)，則忽略該更新
+        // 這防止訪客端因載入延遲或錯誤而回傳空的狀態覆蓋房主
+        if (isHost) {
+            const currentBg = canvas.getObjects().find(o => o.isPdfBackground);
+            if (currentBg) {
+                try {
+                    const incomingJson = JSON.parse(data.content);
+                    const incomingHasPdf = incomingJson.objects && incomingJson.objects.some(o => o.isPdfBackground);
+                    
+                    if (!incomingHasPdf) {
+                        console.warn("防護機制：收到異常更新 (PDF 背景遺失)，忽略並回傳本地狀態");
+                        senderConn.send({
+                            type: 'CANVAS_UPDATE',
+                            content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])),
+                            timestamp: lastModified,
+                            msgId: Date.now() + '-protect-' + Math.random().toString(36).substr(2, 9)
+                        });
+                        return;
+                    }
+                } catch (e) {
+                    console.error("JSON Parse Error:", e);
+                }
+            }
+        }
+
         if (data.timestamp) lastModified = data.timestamp;
         if (data.settings) {
             roomSettings = data.settings;
@@ -344,7 +404,7 @@ function handleDataReceived(data, senderConn) {
         if (isHost) {
             senderConn.send({
                 type: 'CANVAS_UPDATE',
-                content: JSON.stringify(canvas.toJSON(['isPdfBackground'])),
+                content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])),
                 timestamp: lastModified,
                 settings: roomSettings
             });
@@ -397,9 +457,32 @@ function updateStatus() {
     applyRoomSettings();
 }
 
-const sendUpdate = (arg) => {
-    if (!isSyncing) {
-        const json = JSON.stringify(canvas.toJSON(['isPdfBackground']));
+// 增量更新發送函式
+window.sendObjectUpdate = (action, obj) => {
+    if (isSyncing) return;
+    
+    // 序列化物件 (包含 uid)
+    const content = action === 'remove' ? null : JSON.stringify(obj.toJSON(['isPdfBackground', 'uid']));
+    
+    const payload = { 
+        type: 'CANVAS_OP', 
+        action: action, 
+        uid: obj.uid, 
+        content: content 
+    };
+    
+    broadcast(payload);
+};
+
+// 全量更新 (保留給 PDF 切換頁面或初始化使用)
+window.sendFullSync = () => {
+    if (isSyncing) return;
+    
+    // 這裡可以保留 Debounce 機制，因為全量更新較重
+    if (updateTimer) clearTimeout(updateTimer);
+
+    updateTimer = setTimeout(() => {
+        const json = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid']));
         lastModified = Date.now();
         if (isHost) localStorage.setItem('unbound_board_state', json);
         if (isHost) localStorage.setItem('unbound_last_modified', lastModified);
@@ -424,13 +507,8 @@ const sendUpdate = (arg) => {
             pendingAcks.set(msgId, timeout);
         }
         broadcast(payload);
-    }
+    }, 50); // 50ms 延遲，足夠讓 UI 響應，又不影響同步體感
 };
-
-canvas.on('path:created', sendUpdate);
-canvas.on('object:modified', sendUpdate);
-canvas.on('object:removed', sendUpdate);
-canvas.on('text:editing:exited', sendUpdate);
 
 function renderUserList() {
     const container = document.getElementById('user-list-content');

@@ -13,9 +13,21 @@ HTMLCanvasElement.prototype.getContext = function(type, attributes) {
     return originalGetContext.call(this, type, attributes);
 };
 
+// A4 橫向尺寸 (96 DPI: 297mm x 210mm => ~1123px x 794px)
+const A4_WIDTH = 1123;
+const A4_HEIGHT = 794;
+
+// 追蹤畫布的基礎尺寸與縮放比例
+let canvasBaseWidth = A4_WIDTH;
+let canvasBaseHeight = A4_HEIGHT;
+let canvasScale = 1;
+
 const canvasEl = document.getElementById('c');
 const canvas = new fabric.Canvas(canvasEl, {
     isDrawingMode: true,
+    width: A4_WIDTH,
+    height: A4_HEIGHT,
+    backgroundColor: 'white',
     fireRightClick: true,
     stopContextMenu: true
 });
@@ -48,50 +60,68 @@ canvas.upperCanvasEl.addEventListener('contextmenu', (e) => {
     }
 });
 
-function resizeCanvas() {
-    canvas.setWidth(window.innerWidth);
-    canvas.setHeight(window.innerHeight - document.getElementById('toolbar').offsetHeight);
-    const bg = canvas.getObjects().find(o => o.isPdfBackground);
-    if (bg) fitPdfToWindow(bg);
+// 更新畫布尺寸與縮放 (核心邏輯：讓畫布 DOM 元素大小隨縮放改變)
+function updateCanvasSize() {
+    canvas.setWidth(canvasBaseWidth * canvasScale);
+    canvas.setHeight(canvasBaseHeight * canvasScale);
+    canvas.setZoom(canvasScale);
+    canvas.requestRenderAll();
+}
+
+function zoomCanvas(factor) {
+    let newScale = canvasScale * factor;
+    if (newScale > 5) newScale = 5;
+    if (newScale < 0.1) newScale = 0.1;
+    canvasScale = newScale;
+    updateCanvasSize();
+}
+
+function fitCanvasToWindow() {
+    const container = document.getElementById('canvas-container');
+    if (!container) return;
+    const padding = 40;
+    const availW = container.clientWidth - padding;
+    const availH = container.clientHeight - padding;
+    const scaleW = availW / canvasBaseWidth;
+    const scaleH = availH / canvasBaseHeight;
+    canvasScale = Math.min(scaleW, scaleH); // 取較小值以完整顯示
+    if (canvasScale <= 0) canvasScale = 0.1;
+    updateCanvasSize();
 }
 
 function fitPdfToWindow(bgImg) {
     if (!bgImg) bgImg = canvas.getObjects().find(o => o.isPdfBackground);
     if (!bgImg) return;
 
-    canvas.backgroundColor = "#525659";
-    const clipRect = new fabric.Rect({
-        left: bgImg.left,
-        top: bgImg.top,
-        width: bgImg.width * bgImg.scaleX,
-        height: bgImg.height * bgImg.scaleY
-    });
-    canvas.clipPath = clipRect;
-
-    const padding = 40;
-    const availableWidth = canvas.width - padding;
-    const availableHeight = canvas.height - padding;
-    const contentWidth = bgImg.width * bgImg.scaleX;
-    const contentHeight = bgImg.height * bgImg.scaleY;
-    const zoom = Math.min(availableWidth / contentWidth, availableHeight / contentHeight);
+    // 更新基礎尺寸為 PDF 頁面大小
+    canvasBaseWidth = bgImg.width * bgImg.scaleX;
+    canvasBaseHeight = bgImg.height * bgImg.scaleY;
+    canvas.backgroundColor = "white"; // 確保背景為白色
+    canvas.clipPath = null; // 移除裁切，因為畫布現在就是頁面大小
     
-    canvas.setZoom(zoom);
-    const vpt = canvas.viewportTransform;
-    vpt[4] = (canvas.width - contentWidth * zoom) / 2;
-    vpt[5] = (canvas.height - contentHeight * zoom) / 2;
-    canvas.requestRenderAll();
+    fitCanvasToWindow();
 }
 
-function zoomPdf(factor) {
-    let zoom = canvas.getZoom();
-    zoom *= factor;
-    if (zoom > 5) zoom = 5;
-    if (zoom < 0.1) zoom = 0.1;
-    canvas.zoomToPoint(new fabric.Point(canvas.width / 2, canvas.height / 2), zoom);
+// 設定定位點背景
+function setGridBackground() {
+    const gridSize = 30; // 點的間距
+    const dotRadius = 1; // 點的大小
+    
+    const patternCanvas = document.createElement('canvas');
+    patternCanvas.width = gridSize;
+    patternCanvas.height = gridSize;
+    const ctx = patternCanvas.getContext('2d');
+    
+    ctx.fillStyle = '#cccccc'; // 淡灰色
+    ctx.beginPath();
+    ctx.arc(gridSize/2, gridSize/2, dotRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const pattern = new fabric.Pattern({ source: patternCanvas, repeat: 'repeat' });
+    canvas.setBackgroundColor(pattern, canvas.renderAll.bind(canvas));
 }
 
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+setGridBackground(); // 初始化背景
 
 function setMode(mode) {
     if (!isHost && !roomSettings.allowEditing && mode !== 'select') return;
@@ -248,7 +278,8 @@ function loadPdfPage() {
     };
     if (pdfCanvasStates[currentPdfPage]) {
         canvas.loadFromJSON(pdfCanvasStates[currentPdfPage], () => {
-            fitPdfToWindow();
+            // 載入後自動適應視窗 (若需要保持縮放可改用 updateCanvasSize)
+            fitPdfToWindow(); 
             onLoaded();
         });
     } else {
@@ -278,8 +309,12 @@ function closePdfMode() {
     document.getElementById('pdf-controls').style.display = 'none';
     document.getElementById('btn-pdf').style.display = 'inline-block';
     document.getElementById('btn-img').style.display = 'inline-block';
-    canvas.setZoom(1);
-    canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+    
+    // 恢復 A4 尺寸
+    canvasBaseWidth = A4_WIDTH;
+    canvasBaseHeight = A4_HEIGHT;
+    canvasScale = 1;
+    updateCanvasSize();
     canvas.clipPath = null;
     clearCanvas();
 }
@@ -320,7 +355,7 @@ async function handlePdfUpload(input) {
 function clearCanvas() {
     if (!isHost && !roomSettings.allowEditing) return;
     canvas.clear();
-    canvas.backgroundColor = "#f8f9fa";
+    setGridBackground(); // 恢復定位點背景
     canvas.setZoom(1);
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
     lastModified = Date.now();

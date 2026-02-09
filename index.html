@@ -11,7 +11,13 @@
         body { margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; overflow: hidden; }
         #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: none; gap: 10px; align-items: center; }
         #status { margin-left: auto; font-size: 0.9em; color: #666; }
-        #canvas-container { flex: 1; background: #f8f9fa; position: relative; }
+        #canvas-container { 
+            flex: 1; background: #e0e0e0; position: relative; 
+            display: flex; justify-content: center; align-items: center; overflow: auto; 
+        }
+        /* Fabric.js 產生的畫布容器樣式 */
+        .canvas-container { background: white; box-shadow: 0 0 15px rgba(0,0,0,0.15); margin: 20px; }
+
         button { cursor: pointer; padding: 5px 10px; }
         .active { background: #007bff; color: white; border: none; }
         #overlay {
@@ -111,13 +117,13 @@
     <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
     <button onclick="document.getElementById('pdf-upload').click()" id="btn-pdf">📄 上傳 PDF</button>
     <input type="file" id="pdf-upload" accept="application/pdf" style="display: none;" onchange="handlePdfUpload(this)">
+    <button onclick="zoomCanvas(1.1)" title="放大">➕</button>
+    <button onclick="zoomCanvas(0.9)" title="縮小">➖</button>
+    <button onclick="fitCanvasToWindow()" title="適應視窗">⤢</button>
     <div id="pdf-controls" style="display:none; border-left: 1px solid #ccc; padding-left: 10px; margin-left: 10px; align-items: center; gap: 5px;">
         <button onclick="changePdfPage(-1)" class="host-only">◀</button>
         <span id="pdf-page-indicator" style="font-size: 0.9em; font-weight: bold; color: #333;" class="host-only"></span>
         <button onclick="changePdfPage(1)" class="host-only">▶</button>
-        <button onclick="zoomPdf(1.1)" title="放大">➕</button>
-        <button onclick="zoomPdf(0.9)" title="縮小">➖</button>
-        <button onclick="fitPdfToWindow()" title="適應視窗">⤢</button>
         <button onclick="closePdfMode()" style="background:#dc3545; color:white; margin-left: 5px;" class="host-only">✖ 結束</button>
     </div>
     <button onclick="clearCanvas()" id="btn-clear">🗑️ 清空</button>

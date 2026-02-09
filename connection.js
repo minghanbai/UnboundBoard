@@ -113,7 +113,6 @@ function createRoom() {
     myNickname = nameInput || generateNickname();
     document.getElementById('landing-modal').classList.add('hidden');
     document.getElementById('toolbar').style.display = 'flex';
-    resizeCanvas();
     targetHostId = null;
     initializePeer();
 }
@@ -126,7 +125,6 @@ function joinRoomInput() {
     targetHostId = code;
     document.getElementById('landing-modal').classList.add('hidden');
     document.getElementById('toolbar').style.display = 'flex';
-    resizeCanvas();
     const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + targetHostId;
     window.history.pushState({path:newUrl},'',newUrl);
     initializePeer();
@@ -655,7 +653,6 @@ setInterval(() => {
 if (targetHostId) {
     myNickname = generateNickname();
     document.getElementById('toolbar').style.display = 'flex';
-    resizeCanvas();
     initializePeer();
 } else {
     document.getElementById('landing-modal').classList.remove('hidden');

@@ -6,6 +6,7 @@
     <title>P2P Serverless Unbound Board</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
         body { margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; overflow: hidden; }
         #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: none; gap: 10px; align-items: center; }
@@ -89,6 +90,10 @@
         .divider::before, .divider::after { content: ""; position: absolute; top: 50%; width: 40%; height: 1px; background: #eee; }
         .divider::before { left: 0; }
         .divider::after { right: 0; }
+        #context-menu {
+            display: none; position: absolute; z-index: 3000; background: white; 
+            border: 1px solid #ccc; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); border-radius: 4px; overflow: hidden;
+        }
     </style>
 </head>
 <body>
@@ -104,6 +109,17 @@
     <button onclick="addStickyNote()" id="btn-note">📝 便條紙</button>
     <button onclick="document.getElementById('img-upload').click()" id="btn-img">🖼️ 上傳圖片</button>
     <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
+    <button onclick="document.getElementById('pdf-upload').click()" id="btn-pdf">📄 上傳 PDF</button>
+    <input type="file" id="pdf-upload" accept="application/pdf" style="display: none;" onchange="handlePdfUpload(this)">
+    <div id="pdf-controls" style="display:none; border-left: 1px solid #ccc; padding-left: 10px; margin-left: 10px; align-items: center; gap: 5px;">
+        <button onclick="changePdfPage(-1)" class="host-only">◀</button>
+        <span id="pdf-page-indicator" style="font-size: 0.9em; font-weight: bold; color: #333;" class="host-only"></span>
+        <button onclick="changePdfPage(1)" class="host-only">▶</button>
+        <button onclick="zoomPdf(1.1)" title="放大">➕</button>
+        <button onclick="zoomPdf(0.9)" title="縮小">➖</button>
+        <button onclick="fitPdfToWindow()" title="適應視窗">⤢</button>
+        <button onclick="closePdfMode()" style="background:#dc3545; color:white; margin-left: 5px;" class="host-only">✖ 結束</button>
+    </div>
     <button onclick="clearCanvas()" id="btn-clear">🗑️ 清空</button>
     <button onclick="copyLink()" style="background: #28a745; color: white; border:none;">🔗 複製分享連結</button>
     <span id="status">正在連線...</span>
@@ -168,7 +184,14 @@
     </div>
 </div>
 
+<div id="context-menu">
+    <div style="padding:8px 15px; cursor:pointer; font-size: 0.9em; color: #dc3545;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'" onclick="deleteSelectedObject()">🗑️ 刪除</div>
+</div>
+
 <script>
+    // 設定 PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
     // --- 1. 初始化 Fabric Canvas ---
     // 強制覆寫 getContext，確保 Fabric 內部建立的所有 Cache Canvas (橡皮擦偵測用) 都啟用 willReadFrequently
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
@@ -182,14 +205,97 @@
 
     const canvasEl = document.getElementById('c');
     const canvas = new fabric.Canvas(canvasEl, {
-        isDrawingMode: true
+        isDrawingMode: true,
+        fireRightClick: true, // 啟用右鍵點擊事件
+        stopContextMenu: true // 阻止預設選單
+    });
+    
+    // 禁用瀏覽器預設右鍵選單
+    // 右鍵選單處理
+    canvas.upperCanvasEl.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        
+        // 手動偵測滑鼠下的物件 (忽略 evented 屬性，確保橡皮擦模式下也能選取圖片)
+        const pointer = canvas.getPointer(e);
+        const objects = canvas.getObjects();
+        let target = null;
+        
+        // 從最上層往下找
+        for (let i = objects.length - 1; i >= 0; i--) {
+            if (objects[i].containsPoint(pointer)) {
+                target = objects[i];
+                break;
+            }
+        }
+        
+        if (target) {
+            canvas.setActiveObject(target);
+            canvas.renderAll();
+            
+            const menu = document.getElementById('context-menu');
+            menu.style.display = 'block';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+        } else {
+            document.getElementById('context-menu').style.display = 'none';
+        }
     });
     
     // 調整畫布大小為全螢幕
     function resizeCanvas() {
         canvas.setWidth(window.innerWidth);
         canvas.setHeight(window.innerHeight - document.getElementById('toolbar').offsetHeight); // 扣掉 toolbar
+        
+        // 檢查是否有 PDF 背景，若有則自適應視窗
+        const bg = canvas.getObjects().find(o => o.isPdfBackground);
+        if (bg) fitPdfToWindow(bg);
     }
+    
+    function fitPdfToWindow(bgImg) {
+        if (!bgImg) bgImg = canvas.getObjects().find(o => o.isPdfBackground);
+        if (!bgImg) return;
+
+        // 設定背景色為深灰，區分畫布與 PDF
+        canvas.backgroundColor = "#525659";
+
+        // 設定裁切區域，限制編輯範圍在 PDF 頁面內
+        // 使用絕對定位，確保裁切框對應到 PDF 圖片的邏輯座標 (0,0)
+        const clipRect = new fabric.Rect({
+            left: bgImg.left,
+            top: bgImg.top,
+            width: bgImg.width * bgImg.scaleX,
+            height: bgImg.height * bgImg.scaleY
+        });
+        canvas.clipPath = clipRect;
+
+        const padding = 40; // 留白
+        const availableWidth = canvas.width - padding;
+        const availableHeight = canvas.height - padding;
+        
+        // 使用圖片原始尺寸 (scaleX/Y 應為 1) 計算縮放比例
+        const contentWidth = bgImg.width * bgImg.scaleX;
+        const contentHeight = bgImg.height * bgImg.scaleY;
+
+        // 使用 Math.min 確保完整顯示 (Contain)，解決直向 PDF 只顯示上半部的問題
+        const zoom = Math.min(availableWidth / contentWidth, availableHeight / contentHeight);
+        
+        canvas.setZoom(zoom);
+        
+        // 設定 Viewport 平移以置中
+        const vpt = canvas.viewportTransform;
+        vpt[4] = (canvas.width - contentWidth * zoom) / 2;
+        vpt[5] = (canvas.height - contentHeight * zoom) / 2;
+        canvas.requestRenderAll();
+    }
+
+    function zoomPdf(factor) {
+        let zoom = canvas.getZoom();
+        zoom *= factor;
+        if (zoom > 5) zoom = 5;
+        if (zoom < 0.1) zoom = 0.1;
+        canvas.zoomToPoint(new fabric.Point(canvas.width / 2, canvas.height / 2), zoom);
+    }
+
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
@@ -216,6 +322,12 @@
     let nicknames = {}; // ID -> Name
     let raisedHands = new Set(); // 追蹤舉手的人
     let roomSettings = { allowRaiseHand: true, allowChat: true, allowEditing: true }; // 房間權限設定
+    
+    // PDF 簡報模式變數
+    let pdfImages = []; // 儲存 PDF 每一頁的圖片 DataURL
+    let pdfCanvasStates = []; // 儲存每一頁的 Canvas JSON 狀態 (塗鴉)
+    let currentPdfPage = -1;
+    let lastPdfSrc = null; // 用於訪客端判斷是否換頁
 
     // UI 提示與鎖定功能
     function setOverlay(show, msg = "") {
@@ -463,6 +575,7 @@
             connections.forEach(c => {
                 if (c.open) {
                     c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas), timestamp: lastModified });
+                    c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground'])), timestamp: lastModified });
                 }
             });
             broadcastPeerList();
@@ -487,6 +600,7 @@
                 // 如果我是臨時房主，把最新狀態傳回去
                 if (isTempHost) {
                     rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas), timestamp: lastModified });
+                    rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground'])), timestamp: lastModified });
                     
                     // 先卸任，避免後續邏輯衝突
                     isTempHost = false;
@@ -619,6 +733,7 @@
                 senderConn.send({
                     type: 'CANVAS_UPDATE',
                     content: JSON.stringify(canvas),
+                    content: JSON.stringify(canvas.toJSON(['isPdfBackground'])),
                     timestamp: lastModified,
                     msgId: Date.now() + '-rev-' + Math.random().toString(36).substr(2, 9)
                 });
@@ -640,6 +755,32 @@
 
             canvas.loadFromJSON(data.content, () => {
                 canvas.renderAll();
+                
+                // 檢查是否有 PDF 背景
+                const bg = canvas.getObjects().find(o => o.isPdfBackground);
+                
+                if (bg) {
+                    // 強制鎖定 PDF 背景，防止移動或編輯
+                    bg.set({ selectable: false, evented: false });
+                    // 顯示 PDF 控制項
+                    document.getElementById('pdf-controls').style.display = 'flex';
+                    // 根據身分隱藏/顯示特定按鈕
+                    document.querySelectorAll('#pdf-controls .host-only').forEach(el => {
+                        el.style.display = isHost ? 'inline-block' : 'none';
+                    });
+
+                    // 智慧縮放：只有在「初次載入」或「切換頁面」時才強制適應視窗
+                    // 若只是筆跡更新，則保留訪客當前的縮放狀態
+                    const currentSrc = bg.getSrc();
+                    if (currentSrc !== lastPdfSrc) {
+                        fitPdfToWindow(bg);
+                        lastPdfSrc = currentSrc;
+                    }
+                } else {
+                    document.getElementById('pdf-controls').style.display = 'none';
+                    lastPdfSrc = null;
+                }
+                
                 isSyncing = false; 
                 if (isHost) {
                     localStorage.setItem('unbound_board_state', data.content);
@@ -666,6 +807,7 @@
             senderConn.send({
                 type: 'CANVAS_UPDATE',
                 content: JSON.stringify(canvas),
+                content: JSON.stringify(canvas.toJSON(['isPdfBackground'])),
                 timestamp: lastModified,
                 settings: roomSettings
             });
@@ -676,6 +818,8 @@
             isSyncing = true; // 鎖定
             canvas.clear();
             canvas.backgroundColor = "#f8f9fa"; // 保持背景色
+            canvas.setZoom(1);
+            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
             if (isHost) localStorage.removeItem('unbound_board_state');
             if (isHost) localStorage.removeItem('unbound_last_modified');
             if (isHost) broadcast(data, senderConn);
@@ -726,7 +870,7 @@
     
     const sendUpdate = (arg) => {
         if (!isSyncing) {
-            const json = JSON.stringify(canvas);
+            const json = JSON.stringify(canvas.toJSON(['isPdfBackground']));
             lastModified = Date.now(); // 更新時間戳
             if (isHost) localStorage.setItem('unbound_board_state', json);
             if (isHost) localStorage.setItem('unbound_last_modified', lastModified);
@@ -789,8 +933,15 @@
         canvas.selection = false;
         canvas.defaultCursor = 'default';
         canvas.forEachObject(o => {
-            o.selectable = true;
-            o.perPixelTargetFind = false; // 預設使用 Bounding Box，方便選取
+            // 確保 PDF 背景永遠鎖定，不受模式切換影響
+            if (o.isPdfBackground) {
+                o.selectable = false;
+                o.evented = false;
+            } else {
+                o.selectable = true;
+                o.perPixelTargetFind = false; // 預設使用 Bounding Box，方便選取
+                o.evented = true; // 恢復事件響應
+            }
         });
 
         if (mode === 'pencil') {
@@ -806,8 +957,13 @@
             canvas.defaultCursor = 'crosshair';
             canvas.forEachObject(o => {
                 o.selectable = false;
-                o.perPixelTargetFind = true; // 開啟像素級偵測，只在碰到線條時觸發
-                o.targetFindTolerance = 4;   // 增加一點容錯範圍，讓細線比較好擦
+                if (o.type === 'path') {
+                    o.perPixelTargetFind = true; // 開啟像素級偵測，只在碰到線條時觸發
+                    o.targetFindTolerance = 4;   // 增加一點容錯範圍，讓細線比較好擦
+                } else {
+                    // 圖片、PDF 等非路徑物件，在橡皮擦模式下不接收事件
+                    o.evented = false;
+                }
             });
             canvas.discardActiveObject();
             canvas.requestRenderAll();
@@ -817,7 +973,29 @@
     // 橡皮擦事件監聽
     canvas.on('mouse:down', (opt) => {
         isMouseDown = true;
-        if (currentMode === 'eraser' && opt.target) {
+        
+        let target = opt.target;
+        // 如果在畫筆模式下，右鍵點擊不會自動偵測 target，需手動偵測
+        if (opt.button === 3 && !target && canvas.isDrawingMode) {
+            target = canvas.findTarget(opt.e);
+        }
+        // 點擊畫布時隱藏選單
+        document.getElementById('context-menu').style.display = 'none';
+
+        // 右鍵選單 (Button 3)
+        if (opt.button === 3 && target) {
+            canvas.setActiveObject(target);
+            canvas.renderAll();
+            const menu = document.getElementById('context-menu');
+            menu.style.display = 'block';
+            menu.style.left = opt.e.clientX + 'px';
+            menu.style.top = opt.e.clientY + 'px';
+            return;
+        } else {
+            document.getElementById('context-menu').style.display = 'none';
+        }
+
+        if (currentMode === 'eraser' && opt.target && opt.target.type === 'path') {
             canvas.remove(opt.target);
         }
     });
@@ -825,7 +1003,7 @@
         isMouseDown = false;
     });
     canvas.on('mouse:move', (opt) => {
-        if (currentMode === 'eraser' && isMouseDown && opt.target) {
+        if (currentMode === 'eraser' && isMouseDown && opt.target && opt.target.type === 'path') {
             canvas.remove(opt.target);
         }
     });
@@ -845,6 +1023,32 @@
         setMode('select'); // 切換到選取模式以便編輯
         sendUpdate();
     }
+
+    // --- 刪除功能 (鍵盤與右鍵) ---
+    function deleteSelectedObject() {
+        if (!isHost && !roomSettings.allowEditing) return;
+        const activeObjects = canvas.getActiveObjects();
+        if (activeObjects.length) {
+            // 防止刪除正在編輯中的文字
+            if (activeObjects[0].isEditing) return;
+
+            canvas.discardActiveObject();
+            activeObjects.forEach(obj => {
+                canvas.remove(obj);
+            });
+            canvas.requestRenderAll();
+            sendUpdate();
+        }
+        document.getElementById('context-menu').style.display = 'none';
+    }
+
+    window.addEventListener('keydown', (e) => {
+        const activeEl = document.activeElement;
+        const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+        if ((e.key === 'Delete' || e.key === 'Backspace') && !isInput) {
+            deleteSelectedObject();
+        }
+    });
 
     function handleImageUpload(input) {
         if (!isHost && !roomSettings.allowEditing) return;
@@ -874,10 +1078,137 @@
         input.value = ''; // 清空以允許重複上傳相同檔案
     }
 
+    // --- PDF 簡報模式邏輯 ---
+    
+    function changePdfPage(offset) {
+        const newIndex = currentPdfPage + offset;
+        if (newIndex < 0 || newIndex >= pdfImages.length) return;
+
+        // 1. 儲存當前頁面的狀態 (包含塗鴉)
+        if (currentPdfPage >= 0) {
+            pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas);
+            pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground']));
+        }
+
+        // 2. 切換頁面索引
+        currentPdfPage = newIndex;
+        loadPdfPage();
+    }
+
+    function loadPdfPage() {
+        // 更新 UI
+        document.getElementById('pdf-page-indicator').innerText = `${currentPdfPage + 1} / ${pdfImages.length}`;
+
+        // 鎖定同步，避免載入過程觸發多次更新
+        isSyncing = true;
+
+        const onLoaded = () => {
+            isSyncing = false;
+            sendUpdate(); // 載入完成後，發送一次更新給所有訪客
+        };
+
+        if (pdfCanvasStates[currentPdfPage]) {
+            // A. 如果這頁已經有存檔 (有塗鴉過)，直接載入存檔
+            canvas.loadFromJSON(pdfCanvasStates[currentPdfPage], () => {
+                // 載入後重新適應視窗
+                fitPdfToWindow();
+                onLoaded();
+            });
+        } else {
+            // B. 如果是第一次進入這頁，載入 PDF 圖片並設為背景(或底層物件)
+            canvas.clear();
+            canvas.backgroundColor = "#f8f9fa";
+            // 重置視圖
+            canvas.setZoom(1);
+            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+            
+            fabric.Image.fromURL(pdfImages[currentPdfPage], function(img) {
+                img.set({
+                    left: 0,
+                    top: 0,
+                    originX: 'left',
+                    originY: 'top',
+                    scaleX: 1,
+                    scaleY: 1,
+                    selectable: false, // 鎖定，當作背景
+                    evented: false,
+                    isPdfBackground: true // 標記為 PDF 背景
+                });
+                canvas.add(img);
+                canvas.sendToBack(img); // 確保在最底層
+                fitPdfToWindow(img); // 適應視窗
+                onLoaded();
+            });
+        }
+    }
+
+    function closePdfMode() {
+        if (!confirm("確定要結束 PDF 簡報模式嗎？這將會清空目前的畫布。")) return;
+        pdfImages = [];
+        pdfCanvasStates = [];
+        currentPdfPage = -1;
+        document.getElementById('pdf-controls').style.display = 'none';
+        // 恢復一般按鈕
+        document.getElementById('btn-pdf').style.display = 'inline-block';
+        document.getElementById('btn-img').style.display = 'inline-block';
+        
+        // 重置視圖
+        canvas.setZoom(1);
+        canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+        canvas.clipPath = null; // 清除裁切
+        clearCanvas();
+    }
+
+    async function handlePdfUpload(input) {
+        if (!isHost && !roomSettings.allowEditing) return;
+        const file = input.files[0];
+        if (!file) return;
+
+        setOverlay(true, "正在處理 PDF...");
+        
+        // 重置 PDF 狀態
+        pdfImages = [];
+        pdfCanvasStates = [];
+        currentPdfPage = -1;
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+            
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: 2.0 }); // 提升解析度
+                const canvasTmp = document.createElement('canvas');
+                const context = canvasTmp.getContext('2d');
+                canvasTmp.height = viewport.height;
+                canvasTmp.width = viewport.width;
+                
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+                pdfImages.push(canvasTmp.toDataURL('image/jpeg', 0.8)); // 轉存為圖片
+            }
+            
+            // 進入簡報模式
+            document.getElementById('pdf-controls').style.display = 'flex';
+            // 隱藏部分按鈕以節省空間 (可選)
+            // document.getElementById('btn-pdf').style.display = 'none';
+            
+            changePdfPage(1); // 載入第一頁 (currentPdfPage -1 + 1 = 0)
+            setMode('select');
+        } catch (err) {
+            console.error(err);
+            alert("PDF 處理失敗");
+        } finally {
+            setOverlay(false);
+            input.value = '';
+        }
+    }
+
     function clearCanvas() {
         if (!isHost && !roomSettings.allowEditing) return;
         canvas.clear();
         canvas.backgroundColor = "#f8f9fa"; // 保持背景色
+        canvas.setZoom(1);
+        canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
         lastModified = Date.now(); // 清空也算一種修改
         if (isHost) localStorage.removeItem('unbound_board_state');
         broadcast({ type: 'CLEAR' });
@@ -1140,113 +1471,7 @@
         const canHand = isHost || roomSettings.allowRaiseHand;
 
         // 編輯權限控制
-        const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-clear'];
-        editBtns.forEach(id => {
-            const btn = document.getElementById(id);
-            if(btn) btn.disabled = !canEdit;
-        });
-
-        if (!canEdit) {
-            // 強制退出編輯模式
-            canvas.isDrawingMode = false;
-            canvas.selection = false;
-            canvas.forEachObject(o => o.selectable = false);
-            canvas.discardActiveObject();
-            canvas.requestRenderAll();
-            document.getElementById('btn-pencil').classList.remove('active');
-            document.getElementById('btn-eraser').classList.remove('active');
-            document.getElementById('btn-select').classList.remove('active');
-        }
-
-        // 聊天與舉手按鈕控制
-        document.getElementById('btn-chat-send').disabled = !canChat;
-        document.getElementById('btn-hand').disabled = !canHand;
-    }
-
-    // 初始 UI 狀態
-    setMode('pencil');
-
-    // --- 7. 心跳機制 (Heartbeat) ---
-    setInterval(() => {
-        if (isHost) {
-            // 房主：定期發送心跳
-            broadcast({ type: 'HEARTBEAT' });
-        } else {
-            // 訪客：檢查心跳是否超時
-            if (conn && conn.open) {
-                // 如果超過 5 秒沒收到心跳，判定斷線
-                if (Date.now() - lastHeartbeat > 5000) {
-                    console.warn("心跳超時，判定房主斷線");
-                    setOverlay(true, "⚠️ 連線不穩定，嘗試重連中...");
-                    conn.close(); // 這會觸發 conn.on('close') -> handleHostDisconnect
-                }
-            }
-        }
-    }, 2000); // 每 2 秒檢查一次
-
-</script>
-</body>
-</html>
-        const nameSpan = document.createElement('div');
-        nameSpan.className = 'chat-name';
-        nameSpan.innerText = senderName;
-        
-        const textSpan = document.createElement('div');
-        textSpan.className = 'chat-text';
-        textSpan.innerText = message;
-
-        div.appendChild(nameSpan);
-        div.appendChild(textSpan);
-        history.appendChild(div);
-        history.scrollTop = history.scrollHeight;
-    }
-
-    // Bind Enter key
-    document.getElementById('chat-input').addEventListener('keypress', function (e) {
-        if (e.key === 'Enter') {
-            sendChatMessage();
-        }
-    });
-
-    // --- 10. 房間設定功能 ---
-    function toggleSettings() {
-        const modal = document.getElementById('settings-modal');
-        modal.classList.toggle('hidden');
-        // 同步 UI 狀態
-        document.getElementById('setting-hand').checked = roomSettings.allowRaiseHand;
-        document.getElementById('setting-chat').checked = roomSettings.allowChat;
-        document.getElementById('setting-edit').checked = roomSettings.allowEditing;
-    }
-
-    function updateSettings() {
-        if (!isHost) return;
-        roomSettings.allowRaiseHand = document.getElementById('setting-hand').checked;
-        roomSettings.allowChat = document.getElementById('setting-chat').checked;
-        roomSettings.allowEditing = document.getElementById('setting-edit').checked;
-        
-        broadcast({ type: 'ROOM_SETTINGS_UPDATE', settings: roomSettings });
-        applyRoomSettings(); // 房主自己也要更新 UI (雖然房主不受限，但可能需要視覺回饋或保持一致)
-    }
-
-    function applyRoomSettings() {
-        // 1. 設定按鈕可見性 (僅房主可見)
-        const btnSettings = document.getElementById('btn-settings');
-        if (isHost) {
-            btnSettings.style.display = 'inline-block';
-        } else {
-            btnSettings.style.display = 'none';
-            document.getElementById('settings-modal').classList.add('hidden'); // 強制關閉設定視窗
-        }
-
-        // 2. 根據身分與設定套用限制
-        // 如果是房主，所有功能都啟用 (忽略 roomSettings)
-        // 如果是訪客，則依據 roomSettings
-        const canEdit = isHost || roomSettings.allowEditing;
-        const canChat = isHost || roomSettings.allowChat;
-        const canHand = isHost || roomSettings.allowRaiseHand;
-
-        // 編輯權限控制
-        const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-clear'];
+        const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-pdf', 'btn-clear'];
         editBtns.forEach(id => {
             const btn = document.getElementById(id);
             if(btn) btn.disabled = !canEdit;

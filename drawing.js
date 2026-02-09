@@ -36,30 +36,6 @@ const canvas = new fabric.Canvas(canvasEl, {
 canvas.freeDrawingBrush.width = 5;
 canvas.freeDrawingBrush.color = "black";
 
-// 右鍵選單處理
-canvas.upperCanvasEl.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    const pointer = canvas.getPointer(e);
-    const objects = canvas.getObjects();
-    let target = null;
-    for (let i = objects.length - 1; i >= 0; i--) {
-        if (objects[i].containsPoint(pointer)) {
-            target = objects[i];
-            break;
-        }
-    }
-    if (target) {
-        canvas.setActiveObject(target);
-        canvas.renderAll();
-        const menu = document.getElementById('context-menu');
-        menu.style.display = 'block';
-        menu.style.left = e.clientX + 'px';
-        menu.style.top = e.clientY + 'px';
-    } else {
-        document.getElementById('context-menu').style.display = 'none';
-    }
-});
-
 // 更新畫布尺寸與縮放 (核心邏輯：讓畫布 DOM 元素大小隨縮放改變)
 function updateCanvasSize() {
     canvas.setWidth(canvasBaseWidth * canvasScale);
@@ -178,11 +154,28 @@ function setMode(mode) {
 canvas.on('mouse:down', (opt) => {
     isMouseDown = true;
     let target = opt.target;
-    if (opt.button === 3 && !target && canvas.isDrawingMode) {
-        target = canvas.findTarget(opt.e);
-    }
+    
     document.getElementById('context-menu').style.display = 'none';
-    if (opt.button === 3 && target) {
+    
+    if (opt.button === 3) {
+        // 右鍵點擊：嘗試尋找目標 (特別是在畫筆模式或縮放狀態下)
+        if (!target) {
+            target = canvas.findTarget(opt.e);
+            // 雙重確認：手動檢測 (解決縮放時 findTarget 可能失準的問題)
+            if (!target) {
+                const pointer = canvas.getPointer(opt.e);
+                const objects = canvas.getObjects();
+                for (let i = objects.length - 1; i >= 0; i--) {
+                    if (objects[i].containsPoint(pointer) && !objects[i].isPdfBackground && objects[i].visible) {
+                        target = objects[i];
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (opt.button === 3 && target && !target.isPdfBackground) {
         canvas.setActiveObject(target);
         canvas.renderAll();
         const menu = document.getElementById('context-menu');
@@ -356,8 +349,16 @@ function closePdfMode() {
     clearCanvas();
 }
 
+window.startPdfUpload = function() {
+    if (!isHost) {
+        alert("只有房主可以上傳 PDF");
+        return;
+    }
+    document.getElementById('pdf-upload').click();
+};
+
 async function handlePdfUpload(input) {
-    if (!isHost && !roomSettings.allowEditing) return;
+    if (!isHost) return;
     const file = input.files[0];
     if (!file) return;
     setOverlay(true, "正在處理 PDF...");

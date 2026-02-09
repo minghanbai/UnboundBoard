@@ -27,6 +27,11 @@ let pdfCanvasStates = [];
 let currentPdfPage = -1;
 let lastPdfSrc = null;
 
+// --- YouTube 變數 ---
+let ytPlayer = null;
+let isYoutubeActive = false;
+let currentYoutubeId = null;
+
 // --- UI 狀態 ---
 let currentMode = 'pencil';
 let isMouseDown = false;

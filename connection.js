@@ -73,6 +73,13 @@ function bindPeerEvents(isReturningHost) {
             if (isHost) {
                 broadcastPeerList();
                 c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
+                if (isYoutubeActive && currentYoutubeId) {
+                    c.send({ type: 'YOUTUBE_START', videoId: currentYoutubeId });
+                    if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+                        // 稍微延遲發送狀態，確保對方播放器已載入
+                        setTimeout(() => syncYoutubeToPeer(c), 2000);
+                    }
+                }
             }
         });
         c.on('data', (data) => handleDataReceived(data, c));
@@ -292,6 +299,35 @@ function handleDataReceived(data, senderConn) {
         applyRoomSettings();
         if (isHost) broadcast(data, senderConn);
     }
+    if (data.type === 'YOUTUBE_START') {
+        initYoutubePlayer(data.videoId);
+    }
+    if (data.type === 'YOUTUBE_SYNC') {
+        if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+            const diff = Math.abs(ytPlayer.getCurrentTime() - data.time);
+            // 如果時間差超過 1 秒才進行跳轉，避免微小誤差造成卡頓
+            if (diff > 1) {
+                ytPlayer.seekTo(data.time, true);
+            }
+            if (data.action === 'play') {
+                ytPlayer.playVideo();
+                // 強制觸發：當發生跳轉 (seek) 時，播放器可能會進入緩衝或暫停，導致 playVideo 被吞掉
+                // 使用多階段延遲 (200ms, 800ms) 確保播放指令被執行
+                if (diff > 1 || (typeof ytPlayer.getPlayerState === 'function' && ytPlayer.getPlayerState() !== 1)) {
+                    [200, 800].forEach(delay => {
+                        setTimeout(() => {
+                            if (ytPlayer && typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo();
+                        }, delay);
+                    });
+                }
+            }
+            else if (data.action === 'pause') ytPlayer.pauseVideo();
+        }
+    }
+    if (data.type === 'YOUTUBE_CLOSE') {
+        closeYoutubeLocal();
+    }
+    
     
     // --- 增量更新處理 ---
     if (data.type === 'CANVAS_OP') {
@@ -414,6 +450,10 @@ function handleDataReceived(data, senderConn) {
                 timestamp: lastModified,
                 settings: roomSettings
             });
+            if (isHost && isYoutubeActive && currentYoutubeId) {
+                senderConn.send({ type: 'YOUTUBE_START', videoId: currentYoutubeId });
+                setTimeout(() => syncYoutubeToPeer(senderConn), 2000);
+            }
             broadcastPeerList();
         }
     }
@@ -706,7 +746,7 @@ function applyRoomSettings() {
     const canEdit = isHost || roomSettings.allowEditing;
     const canChat = isHost || roomSettings.allowChat;
     const canHand = isHost || roomSettings.allowRaiseHand;
-    const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-pdf', 'btn-clear'];
+    const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-clear'];
     editBtns.forEach(id => {
         const btn = document.getElementById(id);
         if(btn) btn.disabled = !canEdit;
@@ -730,6 +770,144 @@ function applyRoomSettings() {
     }
     document.getElementById('btn-chat-send').disabled = !canChat;
     document.getElementById('btn-hand').disabled = !canHand;
+}
+
+// --- YouTube 同步功能 ---
+
+window.startYoutubePrompt = function() {
+    if (!isHost) return alert("只有房主可以開啟 YouTube 同步播放");
+    const url = prompt("請輸入 YouTube 影片網址或 ID：");
+    if (!url) return;
+    
+    let videoId = '';
+    if (url.length === 11) {
+        videoId = url;
+    } else {
+        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+        const match = url.match(regExp);
+        if (match && match[2].length === 11) {
+            videoId = match[2];
+        } else {
+            return alert("無效的 YouTube 網址");
+        }
+    }
+    
+    initYoutubePlayer(videoId);
+    broadcast({ type: 'YOUTUBE_START', videoId: videoId });
+};
+
+window.initYoutubePlayer = function(videoId) {
+    isYoutubeActive = true;
+    currentYoutubeId = videoId;
+    document.getElementById('youtube-wrapper').classList.remove('hidden');
+    
+    // 訪客顯示遮罩，防止自行操作
+    if (!isHost) {
+        document.getElementById('yt-blocker').style.display = 'block';
+        document.getElementById('btn-close-yt').style.display = 'none'; 
+        document.getElementById('guest-yt-controls').style.display = 'flex';
+        document.getElementById('btn-guest-play').style.display = 'block';
+    } else {
+        document.getElementById('yt-blocker').style.display = 'none';
+        document.getElementById('btn-close-yt').style.display = 'block';
+        document.getElementById('guest-yt-controls').style.display = 'none';
+    }
+
+    if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+        ytPlayer.loadVideoById(videoId);
+    } else {
+        // 若 ytPlayer 狀態異常（存在但無方法），先進行清理
+        if (ytPlayer) {
+            try { if (typeof ytPlayer.destroy === 'function') ytPlayer.destroy(); } catch(e) {}
+            ytPlayer = null;
+        }
+
+        // 確保 DOM 容器重置為 div (避免 iframe 殘留導致 API 初始化失敗)
+        const wrapper = document.getElementById('youtube-wrapper');
+        if (!document.getElementById('yt-player')) {
+            const newDiv = document.createElement('div');
+            newDiv.id = 'yt-player';
+            const oldIframe = wrapper.querySelector('iframe');
+            if (oldIframe) wrapper.replaceChild(newDiv, oldIframe);
+            else wrapper.insertBefore(newDiv, wrapper.firstChild);
+        }
+
+        if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
+            setTimeout(() => initYoutubePlayer(videoId), 500);
+            return;
+        }
+
+        ytPlayer = new YT.Player('yt-player', {
+            height: '100%',
+            width: '100%',
+            videoId: videoId,
+            playerVars: { 'autoplay': 1, 'controls': 1 },
+            events: {
+                'onStateChange': onPlayerStateChange
+            }
+        });
+    }
+};
+
+function onPlayerStateChange(event) {
+    if (!isHost) {
+        if (event.data === YT.PlayerState.PLAYING) {
+            document.getElementById('btn-guest-play').style.display = 'none';
+        }
+        return;
+    }
+    
+    const time = ytPlayer.getCurrentTime();
+    if (event.data === YT.PlayerState.PLAYING) {
+        broadcast({ type: 'YOUTUBE_SYNC', action: 'play', time: time });
+    } else if (event.data === YT.PlayerState.PAUSED) {
+        broadcast({ type: 'YOUTUBE_SYNC', action: 'pause', time: time });
+    }
+}
+
+function syncYoutubeToPeer(conn) {
+    if (!ytPlayer || !isHost || typeof ytPlayer.getPlayerState !== 'function') return;
+    const state = ytPlayer.getPlayerState();
+    const time = ytPlayer.getCurrentTime();
+    const action = (state === YT.PlayerState.PLAYING) ? 'play' : 'pause';
+    conn.send({ type: 'YOUTUBE_SYNC', action: action, time: time });
+}
+
+window.ytGuestPlay = function() {
+    if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+        ytPlayer.playVideo();
+        document.getElementById('btn-guest-play').style.display = 'none';
+    }
+};
+
+window.ytToggleMute = function() {
+    if (ytPlayer && typeof ytPlayer.isMuted === 'function') {
+        if (ytPlayer.isMuted()) ytPlayer.unMute();
+        else ytPlayer.mute();
+    }
+};
+
+window.ytSetVolume = function(val) {
+    if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
+        ytPlayer.setVolume(val);
+    }
+};
+
+window.closeYoutube = function() {
+    if (isHost) broadcast({ type: 'YOUTUBE_CLOSE' });
+    closeYoutubeLocal();
+};
+
+function closeYoutubeLocal() {
+    isYoutubeActive = false;
+    currentYoutubeId = null;
+    document.getElementById('youtube-wrapper').classList.add('hidden');
+    if (ytPlayer) {
+        ytPlayer.stopVideo();
+        // 選擇不 destroy，保留實例供下次使用，避免 iframe 重建閃爍
+        // ytPlayer.destroy(); 
+        // ytPlayer = null;
+    }
 }
 
 setInterval(() => {

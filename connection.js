@@ -111,6 +111,8 @@ function bindPeerEvents(isReturningHost) {
 function createRoom() {
     const nameInput = document.getElementById('nickname-input').value.trim();
     myNickname = nameInput || generateNickname();
+    localStorage.removeItem('unbound_board_state');
+    localStorage.removeItem('unbound_last_modified');
     document.getElementById('landing-modal').classList.add('hidden');
     document.getElementById('toolbar').style.display = 'flex';
     targetHostId = null;
@@ -257,7 +259,9 @@ function handleDataReceived(data, senderConn) {
     if (data.type === 'CHAT') {
         const senderName = data.nickname || "Unknown";
         appendChatMessage(senderName, data.message, false);
-        showToast(`💬 ${senderName}: ${data.message}`, 'chat');
+        let displayMsg = data.message;
+        if (displayMsg.length > 15) displayMsg = displayMsg.substring(0, 15) + '...';
+        showToast(`💬 ${senderName}: ${displayMsg}`, 'chat');
         if (isHost) broadcast(data, senderConn);
         const panel = document.getElementById('side-panel');
         if (panel.classList.contains('hidden') || activeTab !== 'chat') {
@@ -386,6 +390,7 @@ function handleDataReceived(data, senderConn) {
                 document.getElementById('pdf-controls').style.display = 'none';
                 lastPdfSrc = null;
             }
+            applyRoomSettings();
             isSyncing = false; 
             if (isHost) {
                 localStorage.setItem('unbound_board_state', data.content);
@@ -709,12 +714,19 @@ function applyRoomSettings() {
     if (!canEdit) {
         canvas.isDrawingMode = false;
         canvas.selection = false;
-        canvas.forEachObject(o => o.selectable = false);
+        canvas.defaultCursor = 'default';
+        canvas.hoverCursor = 'default';
+        canvas.forEachObject(o => {
+            o.selectable = false;
+            o.evented = false;
+        });
         canvas.discardActiveObject();
         canvas.requestRenderAll();
         document.getElementById('btn-pencil').classList.remove('active');
         document.getElementById('btn-eraser').classList.remove('active');
         document.getElementById('btn-select').classList.remove('active');
+    } else {
+        canvas.hoverCursor = 'move';
     }
     document.getElementById('btn-chat-send').disabled = !canChat;
     document.getElementById('btn-hand').disabled = !canHand;

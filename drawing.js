@@ -129,7 +129,7 @@ function assignUid(obj) {
 }
 
 function setMode(mode) {
-    if (!isHost && !roomSettings.allowEditing && mode !== 'select') return;
+    if (!isHost && !roomSettings.allowEditing) return;
     currentMode = mode;
     
     document.getElementById('btn-pencil').classList.remove('active');

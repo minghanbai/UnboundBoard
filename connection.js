@@ -99,6 +99,11 @@ function bindPeerEvents(isReturningHost) {
             } else {
                 alert("ID 衝突，請重新整理頁面");
             }
+        } else if (err.type === 'peer-unavailable') {
+            // 若連線備用房主失敗，觸發斷線處理以嘗試下一位
+            if (conn && conn.peer !== targetHostId) {
+                handleHostDisconnect();
+            }
         }
     });
 }
@@ -138,6 +143,7 @@ function connectToHost(hostId) {
     pendingAcks.clear();
     conn = peer.connect(hostId);
     conn.on('open', () => {
+        failedCandidates.clear();
         setOverlay(false);
         document.getElementById('status').innerText = "✅ 已連線";
         lastHeartbeat = Date.now();
@@ -157,7 +163,12 @@ function handleHostDisconnect() {
     if (isHost && !isTempHost) return;
     console.log("Host disconnected. Finding backup...");
     setOverlay(true, "連線中斷，正在尋找備用房主...");
-    const candidates = knownPeers.filter(p => p !== targetHostId && p !== myPeerId).sort();
+    
+    if (conn && conn.peer !== targetHostId) {
+        failedCandidates.add(conn.peer);
+    }
+
+    const candidates = knownPeers.filter(p => p !== targetHostId && p !== myPeerId && !failedCandidates.has(p)).sort();
     if (candidates.length === 0 || myPeerId < candidates[0]) {
         console.log("Becoming Temp Host");
         isTempHost = true;

@@ -17,6 +17,7 @@ let reconnectInterval = null;
 let myNickname = "Guest";
 let nicknames = {};
 let raisedHands = new Set();
+let failedCandidates = new Set();
 let roomSettings = { allowRaiseHand: true, allowChat: true, allowEditing: true };
 
 // --- PDF 變數 ---

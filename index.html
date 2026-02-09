@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Serverless Openboard</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; overflow: hidden; }
+        #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: flex; gap: 10px; align-items: center; }
+        #status { margin-left: auto; font-size: 0.9em; color: #666; }
+        #canvas-container { flex: 1; background: #f8f9fa; position: relative; }
+        button { cursor: pointer; padding: 5px 10px; }
+        .active { background: #007bff; color: white; border: none; }
+    </style>
+</head>
+<body>
+
+<div id="toolbar">
+    <button onclick="setMode('pencil')" id="btn-pencil">✏️ 畫筆</button>
+    <button onclick="setMode('select')" id="btn-select">🖐️ 移動/選取</button>
+    <button onclick="clearCanvas()">🗑️ 清空</button>
+    <button onclick="copyLink()" style="background: #28a745; color: white; border:none;">🔗 複製分享連結</button>
+    <span id="status">正在連線...</span>
+</div>
+
+<div id="canvas-container">
+    <canvas id="c"></canvas>
+</div>
+
+<script>
+    // --- 1. 初始化 Fabric Canvas ---
+    const canvas = new fabric.Canvas('c', {
+        isDrawingMode: true
+    });
+    
+    // 調整畫布大小為全螢幕
+    function resizeCanvas() {
+        canvas.setWidth(window.innerWidth);
+        canvas.setHeight(window.innerHeight - 50); // 扣掉 toolbar
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 畫筆設定
+    canvas.freeDrawingBrush.width = 5;
+    canvas.freeDrawingBrush.color = "black";
+
+    // --- 2. 狀態變數與工具函數 ---
+    let peer = null;
+    let conn = null; // 用於 Guest 存 Host 的連線
+    let connections = []; // 用於 Host 存所有 Guest 的連線
+    let isHost = false;
+    let isSyncing = false; // 防止迴圈更新 (接收數據時不觸發發送)
+
+    // 取得網址參數 ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetPeerId = urlParams.get('id');
+
+    // 生成隨機 ID (如果沒有 ID)
+    function generateId() {
+        return 'board-' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // --- 3. PeerJS 連線邏輯 ---
+    
+    if (targetPeerId) {
+        // === 訪客模式 (Guest) ===
+        isHost = false;
+        document.getElementById('status').innerText = "訪客模式：正在連線到房間...";
+        
+        // 訪客也需要一個 ID，但不需要固定
+        peer = new Peer(); 
+
+        peer.on('open', (id) => {
+            console.log('My Guest ID:', id);
+            // 連線到 Host
+            conn = peer.connect(targetPeerId);
+
+            conn.on('open', () => {
+                document.getElementById('status').innerText = "✅ 已連線到房間";
+                // 連線成功後，請求目前畫布狀態
+                conn.send({ type: 'REQUEST_INIT' });
+            });
+
+            conn.on('data', handleDataReceived);
+            
+            conn.on('error', (err) => {
+                alert("連線失敗，可能房主已離開或 ID 錯誤");
+            });
+        });
+
+    } else {
+        // === 房主模式 (Host) ===
+        isHost = true;
+        const myId = generateId();
+        
+        // 使用特定 ID 初始化
+        peer = new Peer(myId);
+
+        peer.on('open', (id) => {
+            document.getElementById('status').innerText = "👑 房主模式 (等待連線)";
+            // 更新網址但不重整，方便複製
+            const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + id;
+            window.history.pushState({path:newUrl},'',newUrl);
+        });
+
+        peer.on('connection', (c) => {
+            // 當有人連入
+            connections.push(c);
+            document.getElementById('status').innerText = `👥 目前連線人數: ${connections.length}`;
+            
+            c.on('data', (data) => handleDataReceived(data, c));
+            
+            c.on('close', () => {
+                connections = connections.filter(conn => conn !== c);
+                document.getElementById('status').innerText = `👥 目前連線人數: ${connections.length}`;
+            });
+        });
+    }
+
+    peer.on('error', (err) => {
+        console.error(err);
+        if(err.type === 'unavailable-id') {
+            alert("ID 衝突，請重新整理頁面");
+        }
+    });
+
+    // --- 4. 數據同步邏輯 (核心) ---
+
+    // 发送數據
+    function broadcast(data, excludeConn = null) {
+        if (isHost) {
+            // 房主：發送給所有 Guest (除了來源)
+            connections.forEach(c => {
+                if (c !== excludeConn && c.open) {
+                    c.send(data);
+                }
+            });
+        } else if (conn && conn.open) {
+            // 訪客：只發送給房主 (房主會再轉發)
+            conn.send(data);
+        }
+    }
+
+    // 處理接收到的數據
+    function handleDataReceived(data, senderConn) {
+        isSyncing = true; // 鎖定，避免觸發 'object:added' 事件造成無限迴圈
+
+        if (data.type === 'CANVAS_UPDATE') {
+            canvas.loadFromJSON(data.content, () => {
+                canvas.renderAll();
+                isSyncing = false; 
+            });
+            
+            // 如果我是房主，收到 A 的畫圖，要轉發給 B, C, D...
+            if (isHost) {
+                broadcast(data, senderConn);
+            }
+        } 
+        else if (data.type === 'REQUEST_INIT' && isHost) {
+            // 訪客剛進來，房主發送當前完整狀態
+            senderConn.send({
+                type: 'CANVAS_UPDATE',
+                content: JSON.stringify(canvas)
+            });
+            isSyncing = false;
+        }
+        else if (data.type === 'CLEAR') {
+            canvas.clear();
+            canvas.backgroundColor = "#f8f9fa"; // 保持背景色
+            if (isHost) broadcast(data, senderConn);
+            isSyncing = false;
+        }
+    }
+
+    // --- 5. 監聽畫布事件 (觸發同步) ---
+    
+    const sendUpdate = () => {
+        if (!isSyncing) {
+            const json = JSON.stringify(canvas);
+            broadcast({ type: 'CANVAS_UPDATE', content: json });
+        }
+    };
+
+    // 監聽畫完一筆、物件移動、變形
+    canvas.on('path:created', sendUpdate);
+    canvas.on('object:modified', sendUpdate);
+    
+    // --- 6. UI 功能 ---
+
+    function setMode(mode) {
+        if (mode === 'pencil') {
+            canvas.isDrawingMode = true;
+            document.getElementById('btn-pencil').classList.add('active');
+            document.getElementById('btn-select').classList.remove('active');
+        } else {
+            canvas.isDrawingMode = false;
+            document.getElementById('btn-pencil').classList.remove('active');
+            document.getElementById('btn-select').classList.add('active');
+        }
+    }
+
+    function clearCanvas() {
+        canvas.clear();
+        canvas.backgroundColor = "#f8f9fa"; // 保持背景色
+        broadcast({ type: 'CLEAR' });
+    }
+
+    function copyLink() {
+        const url = window.location.href;
+        navigator.clipboard.writeText(url).then(() => {
+            alert("連結已複製！傳給朋友即可加入協作。\n" + url);
+        });
+    }
+
+    // 初始 UI 狀態
+    setMode('pencil');
+
+</script>
+</body>
+</html>

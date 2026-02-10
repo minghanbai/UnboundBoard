@@ -60,21 +60,21 @@ function showToast(msg, type = 'normal') {
         clearTimeout(toastTimeout);
         toastTimeout = null;
     }
-    
+
     // 清空容器，確保只顯示一則 (共用氣泡)
     container.innerHTML = '';
 
     const div = document.createElement('div');
     div.className = 'toast';
     div.innerText = msg;
-    
+
     // 根據類型設定樣式
     if (type === 'chat') {
         div.style.backgroundColor = 'rgba(0, 123, 255, 0.9)';
     }
 
     container.appendChild(div);
-    
+
     // 設定新的計時器 (配合 CSS 動畫時間 3s)
     toastTimeout = setTimeout(() => {
         if (div.parentNode) div.remove();

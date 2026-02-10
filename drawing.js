@@ -5,7 +5,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 // 強制覆寫 getContext
 const originalGetContext = HTMLCanvasElement.prototype.getContext;
-HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+HTMLCanvasElement.prototype.getContext = function (type, attributes) {
     if (type === '2d') {
         attributes = attributes || {};
         attributes.willReadFrequently = true;
@@ -74,7 +74,7 @@ function fitPdfToWindow(bgImg) {
     canvasBaseHeight = bgImg.height * bgImg.scaleY;
     canvas.backgroundColor = "white"; // 確保背景為白色
     canvas.clipPath = null; // 移除裁切，因為畫布現在就是頁面大小
-    
+
     fitCanvasToWindow();
 }
 
@@ -82,15 +82,15 @@ function fitPdfToWindow(bgImg) {
 function setGridBackground() {
     const gridSize = 30; // 點的間距
     const dotRadius = 1; // 點的大小
-    
+
     const patternCanvas = document.createElement('canvas');
     patternCanvas.width = gridSize;
     patternCanvas.height = gridSize;
     const ctx = patternCanvas.getContext('2d');
-    
+
     ctx.fillStyle = '#cccccc'; // 淡灰色
     ctx.beginPath();
-    ctx.arc(gridSize/2, gridSize/2, dotRadius, 0, Math.PI * 2);
+    ctx.arc(gridSize / 2, gridSize / 2, dotRadius, 0, Math.PI * 2);
     ctx.fill();
 
     const pattern = new fabric.Pattern({ source: patternCanvas, repeat: 'repeat' });
@@ -107,11 +107,11 @@ function assignUid(obj) {
 function setMode(mode) {
     if (!isHost && !roomSettings.allowEditing) return;
     currentMode = mode;
-    
+
     document.getElementById('btn-pencil').classList.remove('active');
     document.getElementById('btn-select').classList.remove('active');
     document.getElementById('btn-eraser').classList.remove('active');
-    
+
     canvas.isDrawingMode = false;
     canvas.selection = false;
     canvas.defaultCursor = 'default';
@@ -129,7 +129,7 @@ function setMode(mode) {
     if (mode === 'pencil') {
         canvas.isDrawingMode = true;
         document.getElementById('btn-pencil').classList.add('active');
-    } 
+    }
     else if (mode === 'select') {
         document.getElementById('btn-select').classList.add('active');
         canvas.selection = true;
@@ -154,9 +154,9 @@ function setMode(mode) {
 canvas.on('mouse:down', (opt) => {
     isMouseDown = true;
     let target = opt.target;
-    
+
     document.getElementById('context-menu').style.display = 'none';
-    
+
     if (opt.button === 3) {
         // 右鍵點擊：嘗試尋找目標 (特別是在畫筆模式或縮放狀態下)
         if (!target) {
@@ -266,8 +266,8 @@ function handleImageUpload(input) {
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(e) {
-        fabric.Image.fromURL(e.target.result, function(img) {
+    reader.onload = function (e) {
+        fabric.Image.fromURL(e.target.result, function (img) {
             const maxSize = 300;
             const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
             img.set({
@@ -308,7 +308,7 @@ function loadPdfPage() {
     if (pdfCanvasStates[currentPdfPage]) {
         canvas.loadFromJSON(pdfCanvasStates[currentPdfPage], () => {
             // 載入後自動適應視窗 (若需要保持縮放可改用 updateCanvasSize)
-            fitPdfToWindow(); 
+            fitPdfToWindow();
             onLoaded();
         });
     } else {
@@ -316,7 +316,7 @@ function loadPdfPage() {
         canvas.backgroundColor = "#f8f9fa";
         canvas.setZoom(1);
         canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
-        fabric.Image.fromURL(pdfImages[currentPdfPage], function(img) {
+        fabric.Image.fromURL(pdfImages[currentPdfPage], function (img) {
             img.set({
                 left: 0, top: 0, originX: 'left', originY: 'top',
                 scaleX: 1, scaleY: 1, selectable: false, evented: false,
@@ -339,7 +339,7 @@ function closePdfMode() {
     document.getElementById('pdf-controls').style.display = 'none';
     document.getElementById('btn-pdf').style.display = 'inline-block';
     document.getElementById('btn-img').style.display = 'inline-block';
-    
+
     // 恢復 A4 尺寸
     canvasBaseWidth = A4_WIDTH;
     canvasBaseHeight = A4_HEIGHT;
@@ -349,7 +349,7 @@ function closePdfMode() {
     clearCanvas();
 }
 
-window.startPdfUpload = function() {
+window.startPdfUpload = function () {
     if (!isHost) {
         alert("只有房主可以上傳 PDF");
         return;

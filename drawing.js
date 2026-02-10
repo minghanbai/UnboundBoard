@@ -36,6 +36,174 @@ const canvas = new fabric.Canvas(canvasEl, {
 canvas.freeDrawingBrush.width = 5;
 canvas.freeDrawingBrush.color = "black";
 
+// --- 畫筆設定事件綁定 ---
+const brushSizeInput = document.getElementById('brush-size');
+const btnToolPencil = document.getElementById('btn-tool-pencil');
+const btnToolHighlighter = document.getElementById('btn-tool-highlighter');
+const btnToolEraser = document.getElementById('btn-tool-eraser');
+const brushColorPicker = document.getElementById('brush-color-picker');
+
+// 色票定義
+const PALETTES = {
+    pencil: ['#000000', '#dc3545', '#fd7e14', '#ffc107', '#007bff', '#28a745'],
+    highlighter: ['#868e96', '#ff8787', '#ffa94d', '#ffe066', '#74c0fc', '#8ce99a'] // 較低彩度/粉彩的螢光筆色
+};
+
+let currentBrushColor = "#000000";
+let isHighlighterMode = false;
+
+if (brushSizeInput) {
+    brushSizeInput.addEventListener('input', function() {
+        canvas.freeDrawingBrush.width = parseInt(this.value, 10) || 1;
+    });
+}
+
+if (btnToolPencil) {
+    btnToolPencil.addEventListener('click', function() {
+        isHighlighterMode = false;
+        setMode('pencil');
+        updateBrushState();
+        updateBrushToolbarUI();
+        updatePaletteUI();
+    });
+}
+
+if (btnToolHighlighter) {
+    btnToolHighlighter.addEventListener('click', function() {
+        isHighlighterMode = true;
+        setMode('pencil');
+        updateBrushState();
+        updateBrushToolbarUI();
+        updatePaletteUI();
+    });
+}
+
+if (btnToolEraser) {
+    btnToolEraser.addEventListener('click', function() {
+        setMode('eraser');
+        updateBrushToolbarUI();
+    });
+}
+
+if (brushColorPicker) {
+    brushColorPicker.addEventListener('input', function() {
+        setBrushColor(this.value, null);
+    });
+}
+
+function hexToRgba(hex, alpha) {
+    let r = 0, g = 0, b = 0;
+    if (hex.length === 4) {
+        r = parseInt(hex[1] + hex[1], 16);
+        g = parseInt(hex[2] + hex[2], 16);
+        b = parseInt(hex[3] + hex[3], 16);
+    } else if (hex.length === 7) {
+        r = parseInt(hex.substring(1, 3), 16);
+        g = parseInt(hex.substring(3, 5), 16);
+        b = parseInt(hex.substring(5, 7), 16);
+    }
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function updateBrushState() {
+    // 若為螢光筆模式，設定透明度為 0.3，否則為不透明
+    canvas.freeDrawingBrush.color = isHighlighterMode ? hexToRgba(currentBrushColor, 0.3) : currentBrushColor;
+}
+
+window.setBrushColor = function(hex, presetElement) {
+    currentBrushColor = hex;
+    updateBrushState();
+    if (brushColorPicker) brushColorPicker.value = hex;
+    
+    const indicator = document.getElementById('brush-color-indicator');
+    const presets = document.querySelectorAll('.color-preset');
+
+    if (presetElement) {
+        // 點擊了預設色票
+        presets.forEach(el => el.classList.remove('active'));
+        presetElement.classList.add('active');
+        if (indicator) indicator.style.display = 'none';
+    } else {
+        // 使用了自訂顏色選擇器
+        presets.forEach(el => el.classList.remove('active'));
+        if (indicator) {
+            indicator.style.display = 'block';
+            indicator.style.backgroundColor = hex;
+        }
+    }
+};
+
+function updateBrushToolbarUI() {
+    if (btnToolPencil) btnToolPencil.classList.remove('active');
+    if (btnToolHighlighter) btnToolHighlighter.classList.remove('active');
+    if (btnToolEraser) btnToolEraser.classList.remove('active');
+
+    if (currentMode === 'eraser') {
+        if (btnToolEraser) btnToolEraser.classList.add('active');
+    } else if (currentMode === 'pencil') {
+        if (isHighlighterMode) {
+            if (btnToolHighlighter) btnToolHighlighter.classList.add('active');
+        } else {
+            if (btnToolPencil) btnToolPencil.classList.add('active');
+        }
+    }
+
+    // 根據模式禁用/啟用 尺寸與顏色工具
+    const isEraser = currentMode === 'eraser';
+    
+    if (brushSizeInput) {
+        brushSizeInput.disabled = isEraser;
+        if (brushSizeInput.parentElement) {
+            brushSizeInput.parentElement.style.opacity = isEraser ? '0.3' : '1';
+            brushSizeInput.parentElement.style.pointerEvents = isEraser ? 'none' : 'auto';
+        }
+    }
+
+    const firstPreset = document.querySelector('.color-preset');
+    if (firstPreset && firstPreset.parentElement) {
+        const colorContainer = firstPreset.parentElement;
+        colorContainer.style.opacity = isEraser ? '0.3' : '1';
+        colorContainer.style.pointerEvents = isEraser ? 'none' : 'auto';
+    }
+
+    // 更新主工具列按鈕圖示 (btn-pencil 現在作為繪圖工具總入口)
+    const mainBtn = document.getElementById('btn-pencil');
+    if (mainBtn) {
+        let iconName = 'pencil';
+        if (currentMode === 'eraser') {
+            iconName = 'eraser';
+        } else if (isHighlighterMode) {
+            iconName = 'highlighter';
+        }
+        mainBtn.innerHTML = `<i data-lucide="${iconName}"></i>`;
+        lucide.createIcons({ root: mainBtn });
+    }
+}
+
+// 初始化與更新色票 UI
+function updatePaletteUI() {
+    const mode = isHighlighterMode ? 'highlighter' : 'pencil';
+    const colors = PALETTES[mode];
+    const presets = document.querySelectorAll('.color-preset');
+    
+    presets.forEach((el, index) => {
+        if (colors[index]) {
+            el.style.backgroundColor = colors[index];
+            // 更新點擊事件：因為閉包特性，這裡重新綁定或依賴 index 查找皆可
+            // 為了簡單，我們在 init 時綁定一次，點擊時動態查表
+        }
+    });
+}
+
+// 綁定色票點擊事件 (只執行一次)
+document.querySelectorAll('.color-preset').forEach((el, index) => {
+    el.addEventListener('click', function() {
+        const mode = isHighlighterMode ? 'highlighter' : 'pencil';
+        const color = PALETTES[mode][index];
+        setBrushColor(color, this);
+    });
+});
+
 // 更新畫布尺寸與縮放 (核心邏輯：讓畫布 DOM 元素大小隨縮放改變)
 function updateCanvasSize() {
     canvas.setWidth(canvasBaseWidth * canvasScale);
@@ -100,6 +268,9 @@ window.setGridBackground = function() {
 window.setGridBackground(); // 初始化背景
 
 // 新增：重置畫布為 A4 橫向 (供 clearCanvas 與 connection.js 使用)
+// 初始化色票
+updatePaletteUI();
+
 window.resetToA4 = function() {
     canvasBaseWidth = A4_WIDTH;
     canvasBaseHeight = A4_HEIGHT;
@@ -123,12 +294,20 @@ let isSpaceDown = false;
 
 function setMode(mode) {
     // 允許平移模式 (pan) 在禁止編輯時使用
-    if (mode !== 'pan' && !isHost && !roomSettings.allowEditing) return;
+    if (mode !== 'pan' && !isHost && (!roomSettings.allowEditing || isPrivateView)) return;
     currentMode = mode;
+
+    // 控制畫筆設定工具列顯示
+    const brushToolbar = document.getElementById('brush-toolbar');
+    if (brushToolbar) {
+        brushToolbar.style.display = (mode === 'pencil' || mode === 'eraser') ? 'flex' : 'none';
+    }
 
     document.getElementById('btn-pencil').classList.remove('active');
     document.getElementById('btn-select').classList.remove('active');
-    document.getElementById('btn-eraser').classList.remove('active');
+    const btnEraser = document.getElementById('btn-eraser');
+    if (btnEraser) btnEraser.classList.remove('active');
+
     const btnPan = document.getElementById('btn-pan');
     if (btnPan) btnPan.classList.remove('active');
 
@@ -154,6 +333,7 @@ function setMode(mode) {
     if (mode === 'pencil') {
         canvas.isDrawingMode = true;
         document.getElementById('btn-pencil').classList.add('active');
+        updateBrushToolbarUI();
     }
     else if (mode === 'select') {
         document.getElementById('btn-select').classList.add('active');
@@ -170,7 +350,8 @@ function setMode(mode) {
         canvas.requestRenderAll();
     }
     else if (mode === 'eraser') {
-        document.getElementById('btn-eraser').classList.add('active');
+        // 橡皮擦現在整合在畫筆工具內，所以點亮 btn-pencil
+        document.getElementById('btn-pencil').classList.add('active');
         canvas.defaultCursor = 'crosshair';
         canvas.forEachObject(o => {
             o.selectable = false;
@@ -183,6 +364,7 @@ function setMode(mode) {
         });
         canvas.discardActiveObject();
         canvas.requestRenderAll();
+        updateBrushToolbarUI();
     }
 }
 
@@ -261,6 +443,7 @@ canvas.on('mouse:move', (opt) => {
 // 監聽增量更新事件
 canvas.on('path:created', (e) => {
     assignUid(e.path);
+    e.path.pdfPage = currentPdfPage; // 標記頁碼
     if (typeof sendObjectUpdate === 'function') sendObjectUpdate('add', e.path);
 });
 
@@ -280,7 +463,7 @@ canvas.on('text:editing:exited', (e) => {
 });
 
 function addStickyNote() {
-    if (!isHost && !roomSettings.allowEditing) return;
+    if (!isHost && (!roomSettings.allowEditing || isPrivateView)) return;
     const note = new fabric.Textbox('雙擊編輯', {
         left: Math.random() * (canvas.width - 200) + 50,
         top: Math.random() * (canvas.height - 200) + 50,
@@ -290,6 +473,7 @@ function addStickyNote() {
         splitByGrapheme: true
     });
     assignUid(note);
+    note.pdfPage = currentPdfPage; // 標記頁碼
     canvas.add(note);
     canvas.setActiveObject(note);
     setMode('select');
@@ -297,7 +481,7 @@ function addStickyNote() {
 }
 
 function deleteSelectedObject() {
-    if (!isHost && !roomSettings.allowEditing) return;
+    if (!isHost && (!roomSettings.allowEditing || isPrivateView)) return;
     const activeObjects = canvas.getActiveObjects();
     if (activeObjects.length) {
         if (activeObjects[0].isEditing) return;
@@ -343,7 +527,7 @@ window.addEventListener('keyup', (e) => {
 });
 
 function handleImageUpload(input) {
-    if (!isHost && !roomSettings.allowEditing) return;
+    if (!isHost && (!roomSettings.allowEditing || isPrivateView)) return;
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -358,6 +542,7 @@ function handleImageUpload(input) {
                 scaleY: scale
             });
             assignUid(img);
+            img.pdfPage = currentPdfPage; // 標記頁碼
             canvas.add(img);
             canvas.setActiveObject(img);
             setMode('select');
@@ -388,11 +573,12 @@ function changePdfPage(offset, isAbsolute = false, silent = false) {
             // 請求最新畫布狀態以確保同步
             if (!silent && conn && conn.open) conn.send({ type: 'REQUEST_INIT' });
         }
+        if (typeof applyRoomSettings === 'function') applyRoomSettings();
     }
 
     // 只有在同步狀態下（或房主）才保存編輯狀態，避免預覽時覆蓋資料
     if (currentPdfPage >= 0 && !isPrivateView) {
-        pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid']));
+        pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage']));
     }
     currentPdfPage = newIndex;
     
@@ -477,19 +663,39 @@ async function loadPdfPage() {
     // 預覽模式：只載入背景圖，不載入畫筆內容（因為沒有該頁的最新數據）
     if (isPrivateView) {
         canvas.clear();
-        canvas.backgroundColor = "#f8f9fa";
-        fabric.Image.fromURL(pdfImages[currentPdfPage], function (img) {
-            img.set({
-                left: 0, top: 0, originX: 'left', originY: 'top',
-                scaleX: 1, scaleY: 1, selectable: false, evented: false,
-                isPdfBackground: true,
-                lockMovementX: true, lockMovementY: true,
-                lockRotation: true, lockScalingX: true, lockScalingY: true
+        
+        // 修改：如果有該頁面的存檔狀態 (包含筆跡)，則載入存檔，讓訪客能看到之前的內容
+        if (pdfCanvasStates[currentPdfPage]) {
+            canvas.loadFromJSON(pdfCanvasStates[currentPdfPage], () => {
+                const bg = canvas.getObjects().find(o => o.isPdfBackground);
+                if (bg) {
+                    bg.set({
+                        selectable: false, evented: false,
+                        lockMovementX: true, lockMovementY: true,
+                        lockRotation: true, lockScalingX: true, lockScalingY: true
+                    });
+                    fitPdfToWindow(bg);
+                }
             });
-            canvas.add(img);
-            canvas.sendToBack(img);
-            fitPdfToWindow(img);
-        });
+            return;
+        }
+
+        // 否則只載入背景圖 (Fallback)
+        canvas.backgroundColor = "#f8f9fa";
+        if (pdfImages[currentPdfPage]) {
+            fabric.Image.fromURL(pdfImages[currentPdfPage], function (img) {
+                img.set({
+                    left: 0, top: 0, originX: 'left', originY: 'top',
+                    scaleX: 1, scaleY: 1, selectable: false, evented: false,
+                    isPdfBackground: true,
+                    lockMovementX: true, lockMovementY: true,
+                    lockRotation: true, lockScalingX: true, lockScalingY: true
+                });
+                canvas.add(img);
+                canvas.sendToBack(img);
+                fitPdfToWindow(img);
+            });
+        }
         return;
     }
 
@@ -621,7 +827,18 @@ async function handlePdfUpload(input) {
 }
 
 function clearCanvas(forceFullClear = false) {
-    if (!isHost && !roomSettings.allowEditing) return;
+    if (!isHost) return; // 僅限房主使用
+    if (!isHost) return; // 僅限房主使用
+    
+    // 若非強制清空 (手動點擊按鈕)，則跳出確認提示
+    if (!forceFullClear) {
+        if (!confirm("確定要清空當前畫布嗎？此動作無法復原。")) return;
+    }
+    
+    // 若非強制清空 (手動點擊按鈕)，則跳出確認提示
+    if (!forceFullClear) {
+        if (!confirm("確定要清空當前畫布嗎？此動作無法復原。")) return;
+    }
     
     // 判斷是否處於 PDF 模式 (且非強制全清空)
     // 條件：currentPdfPage 有效 且 pdfImages 存在，或者畫布上已有 PDF 背景物件
@@ -642,7 +859,7 @@ function clearCanvas(forceFullClear = false) {
         
         // 更新當前頁面的儲存狀態
         if (isHost && currentPdfPage >= 0) {
-            pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid']));
+            pdfCanvasStates[currentPdfPage] = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage']));
         }
         
         if (typeof broadcast === 'function') broadcast({ type: 'CLEAR_PAGE' });

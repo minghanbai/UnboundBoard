@@ -57,7 +57,6 @@ function bindPeerEvents(isReturningHost) {
                 }, 4000);
             }
 
-            document.getElementById('status').innerText = "👑 房主模式 (等待連線)";
             const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?id=' + id;
             window.history.pushState({path:newUrl},'',newUrl);
         } else {
@@ -72,7 +71,7 @@ function bindPeerEvents(isReturningHost) {
             updateStatus();
             if (isHost) {
                 broadcastPeerList();
-                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
+                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage'])), timestamp: lastModified, settings: roomSettings });
                 if (isYoutubeActive && currentYoutubeId) {
                     c.send({ type: 'YOUTUBE_START', videoId: currentYoutubeId });
                     if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
@@ -141,7 +140,6 @@ function joinRoomInput() {
 
 function connectToHost(hostId) {
     setOverlay(true, "正在連線到: " + hostId);
-    document.getElementById('status').innerText = "正在連線到: " + hostId;
     if (conn) {
         conn.off('close');
         conn.close();
@@ -152,16 +150,16 @@ function connectToHost(hostId) {
     conn.on('open', () => {
         failedCandidates.clear();
         setOverlay(false);
-        document.getElementById('status').innerText = "✅ 已連線";
         lastHeartbeat = Date.now();
         conn.send({ type: 'REQUEST_INIT' });
         conn.send({ type: 'HELLO', nickname: myNickname });
+        updateStatus(); // 更新連線狀態圖示
     });
     conn.on('data', (data) => handleDataReceived(data, conn));
     conn.on('close', () => {
         setOverlay(true, "❌ 連線中斷");
-        document.getElementById('status').innerText = "❌ 連線中斷";
         handleHostDisconnect();
+        updateStatus(); // 更新連線狀態圖示
     });
 }
 
@@ -186,7 +184,7 @@ function handleHostDisconnect() {
         updateStatus();
         connections.forEach(c => {
             if (c.open) {
-                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
+                c.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage'])), timestamp: lastModified, settings: roomSettings });
             }
         });
         broadcastPeerList();
@@ -205,7 +203,7 @@ function startReconnectLoop() {
             console.log("Original Host is back!");
             lastHeartbeat = Date.now();
             if (isTempHost) {
-                rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])), timestamp: lastModified, settings: roomSettings });
+                rConn.send({ type: 'CANVAS_UPDATE', content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage'])), timestamp: lastModified, settings: roomSettings });
                 isTempHost = false;
                 isHost = false;
                 connections.forEach(c => c.close());
@@ -222,7 +220,6 @@ function startReconnectLoop() {
             conn.on('data', (data) => handleDataReceived(data, conn));
             conn.on('close', () => {
                 setOverlay(true, "❌ 連線中斷");
-                document.getElementById('status').innerText = "❌ 連線中斷";
                 handleHostDisconnect();
             });
             conn.send({ type: 'REQUEST_INIT' });
@@ -349,37 +346,65 @@ function handleDataReceived(data, senderConn) {
     
     // --- 增量更新處理 ---
     if (data.type === 'CANVAS_OP') {
-        if (isPrivateView) return; // 預覽模式下忽略更新，避免畫面錯亂
-        isSyncing = true; // 鎖定，避免套用更新時觸發本地事件
+        // 檢查操作的目標頁面
+        const opPage = (data.pdfPage !== undefined) ? data.pdfPage : -1;
         
-        if (data.action === 'add') {
-            fabric.util.enlivenObjects([JSON.parse(data.content)], (objs) => {
-                objs.forEach(o => canvas.add(o));
-                canvas.requestRenderAll();
-            });
-        } 
-        else if (data.action === 'modify') {
-            const obj = canvas.getObjects().find(o => o.uid === data.uid);
-            if (obj) {
-                const props = JSON.parse(data.content);
-                obj.set(props);
-                obj.setCoords(); // 更新座標感應區
-                canvas.requestRenderAll();
+        // 如果操作屬於當前頁面，直接應用到畫布
+        if (opPage === currentPdfPage) {
+            if (isPrivateView) return; // 預覽模式下忽略更新，避免畫面錯亂
+            isSyncing = true; // 鎖定，避免套用更新時觸發本地事件
+            
+            if (data.action === 'add') {
+                fabric.util.enlivenObjects([JSON.parse(data.content)], (objs) => {
+                    objs.forEach(o => {
+                        o.pdfPage = opPage; // 確保屬性存在
+                        canvas.add(o);
+                    });
+                    canvas.requestRenderAll();
+                });
+            } 
+            else if (data.action === 'modify') {
+                const obj = canvas.getObjects().find(o => o.uid === data.uid);
+                if (obj) {
+                    const props = JSON.parse(data.content);
+                    obj.set(props);
+                    obj.setCoords(); // 更新座標感應區
+                    canvas.requestRenderAll();
+                }
+            } 
+            else if (data.action === 'remove') {
+                const obj = canvas.getObjects().find(o => o.uid === data.uid);
+                if (obj) {
+                    canvas.remove(obj);
+                    canvas.requestRenderAll();
+                }
             }
+            isSyncing = false;
         } 
-        else if (data.action === 'remove') {
-            const obj = canvas.getObjects().find(o => o.uid === data.uid);
-            if (obj) {
-                canvas.remove(obj);
-                canvas.requestRenderAll();
-            }
+        // 如果操作屬於其他頁面，更新背景狀態 (pdfCanvasStates)
+        else if (opPage >= 0 && pdfCanvasStates[opPage]) {
+            try {
+                const state = JSON.parse(pdfCanvasStates[opPage]);
+                if (!state.objects) state.objects = [];
+                
+                if (data.action === 'add') {
+                    const newObj = JSON.parse(data.content);
+                    newObj.pdfPage = opPage;
+                    state.objects.push(newObj);
+                } else if (data.action === 'modify') {
+                    const idx = state.objects.findIndex(o => o.uid === data.uid);
+                    if (idx !== -1) state.objects[idx] = JSON.parse(data.content);
+                } else if (data.action === 'remove') {
+                    state.objects = state.objects.filter(o => o.uid !== data.uid);
+                }
+                pdfCanvasStates[opPage] = JSON.stringify(state);
+            } catch (e) { console.error("Background update failed:", e); }
         }
         
         if (isHost) {
             // 房主轉發給其他人
             broadcast(data, senderConn);
         }
-        isSyncing = false;
     }
     else if (data.type === 'CANVAS_UPDATE') {
         if (isPrivateView) return; // 預覽模式下忽略全量更新
@@ -387,7 +412,7 @@ function handleDataReceived(data, senderConn) {
             console.log("收到舊數據，忽略並回傳本地新版");
             senderConn.send({
                 type: 'CANVAS_UPDATE',
-                content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])),
+                content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage'])),
                 timestamp: lastModified,
                 msgId: Date.now() + '-rev-' + Math.random().toString(36).substr(2, 9)
             });
@@ -407,7 +432,7 @@ function handleDataReceived(data, senderConn) {
                         console.warn("防護機制：收到異常更新 (PDF 背景遺失)，忽略並回傳本地狀態");
                         senderConn.send({
                             type: 'CANVAS_UPDATE',
-                            content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])),
+                            content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage'])),
                             timestamp: lastModified,
                             msgId: Date.now() + '-protect-' + Math.random().toString(36).substr(2, 9)
                         });
@@ -481,7 +506,7 @@ function handleDataReceived(data, senderConn) {
         if (isHost) {
             senderConn.send({
                 type: 'CANVAS_UPDATE',
-                content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid'])),
+                content: JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage'])),
                 timestamp: lastModified,
                 settings: roomSettings
             });
@@ -557,10 +582,37 @@ function broadcastPeerList() {
 }
 
 function updateStatus() {
-    const role = isTempHost ? "⚠️ 臨時房主" : (isHost ? "👑 房主" : "訪客");
-    document.getElementById('status').innerText = ` | 線上: ${connections.length + (isHost?0:1)}`;
+    updateUserIcon();
     renderUserList();
     applyRoomSettings();
+}
+
+function updateUserIcon() {
+    const indicator = document.getElementById('user-status-indicator');
+    if (!indicator) return;
+    
+    indicator.innerHTML = '';
+    
+    if (isHost) {
+        // 房主邏輯：區分正式房主與臨時房主
+        // 正式房主：金黃色皇冠 (#ffc107)
+        // 臨時房主：橘紅色皇冠 (#fd7e14)
+        const color = isTempHost ? '#fd7e14' : '#ffc107';
+        indicator.innerHTML = `<i data-lucide="crown" style="width: 14px; height: 14px; fill: ${color}; color: ${color}; stroke-width: 2px;"></i>`;
+    } else {
+        // 訪客邏輯：根據連線狀態顯示燈號
+        if (conn && conn.open) {
+            // 正常連線：綠色小點
+            indicator.innerHTML = `<div style="width: 10px; height: 10px; background: #28a745; border-radius: 50%; border: 2px solid white;"></div>`;
+        } else if (reconnectInterval || (conn && !conn.open)) {
+            // 重連中/警告：黃色驚嘆號 (加上閃爍動畫)
+            indicator.innerHTML = `<i data-lucide="alert-circle" class="blink" style="width: 16px; height: 16px; fill: #ffc107; color: white; stroke-width: 2px;"></i>`;
+        } else {
+            // 斷線/錯誤：紅色小點
+            indicator.innerHTML = `<div style="width: 10px; height: 10px; background: #dc3545; border-radius: 50%; border: 2px solid white;"></div>`;
+        }
+    }
+    lucide.createIcons({ root: indicator });
 }
 
 // 增量更新發送函式
@@ -568,12 +620,13 @@ window.sendObjectUpdate = (action, obj) => {
     if (isSyncing) return;
     
     // 序列化物件 (包含 uid)
-    const content = action === 'remove' ? null : JSON.stringify(obj.toJSON(['isPdfBackground', 'uid']));
+    const content = action === 'remove' ? null : JSON.stringify(obj.toJSON(['isPdfBackground', 'uid', 'pdfPage']));
     
     const payload = { 
         type: 'CANVAS_OP', 
         action: action, 
         uid: obj.uid, 
+        pdfPage: obj.pdfPage, // 傳送頁碼
         content: content 
     };
     
@@ -588,7 +641,7 @@ window.sendFullSync = () => {
     if (updateTimer) clearTimeout(updateTimer);
 
     updateTimer = setTimeout(() => {
-        const json = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid']));
+        const json = JSON.stringify(canvas.toJSON(['isPdfBackground', 'uid', 'pdfPage']));
         lastModified = Date.now();
         if (isHost) localStorage.setItem('unbound_board_state', json);
         if (isHost) localStorage.setItem('unbound_last_modified', lastModified);
@@ -651,6 +704,11 @@ function renderUserList() {
         if (a === myPeerId) return -1;
         return 0;
     });
+
+    // 更新右上角人數徽章
+    const badge = document.getElementById('user-count-badge');
+    if (badge) badge.innerText = allPeers.length;
+
     allPeers.forEach(pid => {
         const div = document.createElement('div');
         div.className = 'user-item';
@@ -805,10 +863,18 @@ function applyRoomSettings() {
         btnSettings.style.display = 'none';
         document.getElementById('settings-modal').classList.add('hidden');
     }
-    const canEdit = isHost || roomSettings.allowEditing;
+
+    // 限制 PDF 與 YouTube 工具僅供房主使用
+    const hostOnlyTools = ['btn-pdf', 'btn-youtube', 'btn-clear'];
+    hostOnlyTools.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = isHost ? '' : 'none';
+    });
+
+    const canEdit = isHost || (roomSettings.allowEditing && !isPrivateView);
     const canChat = isHost || roomSettings.allowChat;
     const canHand = isHost || roomSettings.allowRaiseHand;
-    const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img', 'btn-clear'];
+    const editBtns = ['btn-pencil', 'btn-eraser', 'btn-select', 'btn-note', 'btn-img'];
     editBtns.forEach(id => {
         const btn = document.getElementById(id);
         if(btn) btn.disabled = !canEdit;
@@ -825,7 +891,8 @@ function applyRoomSettings() {
         canvas.discardActiveObject();
         canvas.requestRenderAll();
         document.getElementById('btn-pencil').classList.remove('active');
-        document.getElementById('btn-eraser').classList.remove('active');
+        const btnEraser = document.getElementById('btn-eraser');
+        if (btnEraser) btnEraser.classList.remove('active');
         document.getElementById('btn-select').classList.remove('active');
     } else {
         canvas.hoverCursor = 'move';

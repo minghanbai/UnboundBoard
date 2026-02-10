@@ -142,6 +142,14 @@
             display: flex; flex-direction: column;
         }
         #yt-blocker { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; background: transparent; }
+        
+        .color-preset.active {
+            border: 2px solid #007bff !important;
+            transform: scale(1.1);
+        }
+        
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        .blink { animation: blink 1s infinite ease-in-out; }
     </style>
 </head>
 <body>
@@ -162,13 +170,18 @@
         <button id="btn-return-live" onclick="returnToLive()" style="display:none; font-size: 0.8em; background: #17a2b8; color: white; border:none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">回到同步</button>
         <button onclick="closePdfMode()" style="color:#dc3545;" class="host-only" title="結束 PDF 模式"><i data-lucide="x"></i></button>
     </div>
-    <span id="status">正在連線...</span>
+    <span id="status"></span>
 </div>
 
 <!-- 右上：協作 (舉手、成員、聊天) -->
 <div id="top-right-toolbar" class="floating-toolbar">
+    <button onclick="copyLink()" style="color: #28a745;" title="複製分享連結"><i data-lucide="link"></i></button>
     <button onclick="toggleHand()" id="btn-hand" title="舉手"><i data-lucide="hand"></i></button>
-    <button onclick="toggleSidePanel('users')" id="btn-users" title="成員列表"><i data-lucide="users"></i></button>
+    <button onclick="toggleSidePanel('users')" id="btn-users" title="成員列表" style="position: relative;">
+        <i data-lucide="users"></i>
+        <div id="user-status-indicator" style="position: absolute; top: -3px; right: -3px; display: flex; align-items: center; justify-content: center;"></div>
+        <span id="user-count-badge" style="position: absolute; bottom: 2px; left: 2px; font-size: 10px; background: #6c757d; color: white; padding: 1px 3px; border-radius: 4px; line-height: 1; min-width: 6px;">1</span>
+    </button>
     <button onclick="toggleSidePanel('chat')" id="btn-chat" title="聊天室"><i data-lucide="message-square"></i></button>
 </div>
 
@@ -184,13 +197,41 @@
     <button onclick="setMode('select')" id="btn-select" title="移動/選取"><i data-lucide="mouse-pointer-2"></i></button>
     <button onclick="setMode('pan')" id="btn-pan" title="抓手工具 (空白鍵)"><i data-lucide="grab"></i></button>
     <button onclick="setMode('pencil')" id="btn-pencil" title="畫筆"><i data-lucide="pencil"></i></button>
-    <button onclick="setMode('eraser')" id="btn-eraser" title="橡皮擦"><i data-lucide="eraser"></i></button>
     <button onclick="addStickyNote()" id="btn-note" title="便條紙"><i data-lucide="sticky-note"></i></button>
     <button onclick="document.getElementById('img-upload').click()" id="btn-img" title="上傳圖片"><i data-lucide="image"></i></button>
     <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
     <button onclick="startPdfUpload()" id="btn-pdf" title="上傳 PDF"><i data-lucide="file-text"></i></button>
     <input type="file" id="pdf-upload" accept="application/pdf" style="display: none;" onchange="handlePdfUpload(this)">
     <button onclick="startYoutubePrompt()" id="btn-youtube" title="YouTube"><i data-lucide="youtube"></i></button>
+    <button onclick="clearCanvas()" id="btn-clear" title="清空畫布" style="color: #dc3545;"><i data-lucide="trash-2"></i></button>
+</div>
+
+<!-- 畫筆設定工具列 (僅在畫筆模式顯示) -->
+<div id="brush-toolbar" class="floating-toolbar" style="bottom: 90px; left: 50%; transform: translateX(-50%); padding: 8px 15px; gap: 12px; display: none;">
+    <div style="display: flex; gap: 2px; margin-right: 5px; padding-right: 8px; border-right: 1px solid #eee;">
+        <button id="btn-tool-pencil" title="鉛筆" style="width:32px; height:32px;"><i data-lucide="pencil" style="width: 18px; height: 18px;"></i></button>
+        <button id="btn-tool-highlighter" title="螢光筆" style="width:32px; height:32px;"><i data-lucide="highlighter" style="width: 18px; height: 18px;"></i></button>
+        <button id="btn-tool-eraser" title="橡皮擦" style="width:32px; height:32px;"><i data-lucide="eraser" style="width: 18px; height: 18px;"></i></button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 2px; height: 2px; background: #333; border-radius: 50%;"></div>
+        <input type="range" id="brush-size" min="1" max="20" value="5" style="width: 100px; cursor: pointer;" title="筆刷大小">
+        <div style="width: 20px; height: 20px; background: #333; border-radius: 50%;"></div>
+    </div>
+    <div style="width: 1px; height: 24px; background: #eee; margin: 0 5px;"></div>
+    <div style="display: flex; gap: 5px; align-items: center;">
+        <div class="color-preset active" data-index="0" style="cursor:pointer; width:24px; height:24px; border-radius:50%; border:1px solid #ddd;"></div>
+        <div class="color-preset" data-index="1" style="cursor:pointer; width:24px; height:24px; border-radius:50%; border:1px solid #ddd;"></div>
+        <div class="color-preset" data-index="2" style="cursor:pointer; width:24px; height:24px; border-radius:50%; border:1px solid #ddd;"></div>
+        <div class="color-preset" data-index="3" style="cursor:pointer; width:24px; height:24px; border-radius:50%; border:1px solid #ddd;"></div>
+        <div class="color-preset" data-index="4" style="cursor:pointer; width:24px; height:24px; border-radius:50%; border:1px solid #ddd;"></div>
+        <div class="color-preset" data-index="5" style="cursor:pointer; width:24px; height:24px; border-radius:50%; border:1px solid #ddd;"></div>
+        <div style="position: relative; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; border: 1px solid #ddd; cursor: pointer; background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red); display: flex; justify-content: center; align-items: center;" title="自訂顏色">
+             <div id="brush-color-indicator" style="width: 12px; height: 12px; border-radius: 50%; background: #000000; border: 2px solid white; box-shadow: 0 0 2px rgba(0,0,0,0.3); pointer-events: none; display: none;"></div>
+             <input type="color" id="brush-color-picker" style="opacity: 0; width: 100%; height: 100%; cursor: pointer; padding: 0; border: none; position: absolute; top: 0; left: 0;">
+        </div>
+    </div>
 </div>
 
 <div id="canvas-container">
@@ -276,6 +317,11 @@
     function syncToolbars() {
         const isVisible = getComputedStyle(toolbar).display !== 'none';
         floatingToolbars.forEach(el => {
+            if (el.id === 'brush-toolbar') {
+                if (!isVisible) el.style.display = 'none';
+                else if (typeof currentMode !== 'undefined' && (currentMode === 'pencil' || currentMode === 'eraser')) el.style.display = 'flex';
+                return;
+            }
             el.style.display = isVisible ? 'flex' : 'none';
         });
     }

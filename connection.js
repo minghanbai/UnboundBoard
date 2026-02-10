@@ -327,10 +327,29 @@ function handleDataReceived(data, senderConn) {
     if (data.type === 'YOUTUBE_CLOSE') {
         closeYoutubeLocal();
     }
+    if (data.type === 'PDF_PAGE_DATA') {
+        // 接收房主傳來的 PDF 頁面影像
+        if (pdfImages.length !== data.totalPages) {
+            pdfImages = new Array(data.totalPages).fill(null);
+        }
+        pdfImages[data.pageIndex] = data.image;
+        hostPdfPage = data.pageIndex;
+        
+        // 強制同步到最新頁面 (房主切換時，訪客強制跟隨)
+        isPrivateView = false;
+        document.getElementById('btn-return-live').style.display = 'none';
+        
+        // 更新頁面指示器與按鈕
+        document.getElementById('pdf-page-indicator').innerText = `${data.pageIndex + 1} / ${data.totalPages}`;
+        document.getElementById('pdf-controls').style.display = 'flex';
+        
+        changePdfPage(data.pageIndex, true, true);
+    }
     
     
     // --- 增量更新處理 ---
     if (data.type === 'CANVAS_OP') {
+        if (isPrivateView) return; // 預覽模式下忽略更新，避免畫面錯亂
         isSyncing = true; // 鎖定，避免套用更新時觸發本地事件
         
         if (data.action === 'add') {
@@ -363,6 +382,7 @@ function handleDataReceived(data, senderConn) {
         isSyncing = false;
     }
     else if (data.type === 'CANVAS_UPDATE') {
+        if (isPrivateView) return; // 預覽模式下忽略全量更新
         if (data.timestamp && data.timestamp < lastModified - 2000) {
             console.log("收到舊數據，忽略並回傳本地新版");
             senderConn.send({
@@ -412,12 +432,27 @@ function handleDataReceived(data, senderConn) {
             canvas.renderAll();
             const bg = canvas.getObjects().find(o => o.isPdfBackground);
             if (bg) {
-                bg.set({ selectable: false, evented: false });
+                bg.set({ 
+                    selectable: false, evented: false,
+                    lockMovementX: true, lockMovementY: true,
+                    lockRotation: true, lockScalingX: true, lockScalingY: true
+                });
                 document.getElementById('pdf-controls').style.display = 'flex';
                 document.querySelectorAll('#pdf-controls .host-only').forEach(el => {
                     el.style.display = isHost ? 'inline-block' : 'none';
                 });
+                
+                // 嘗試根據背景圖同步頁碼 (若 PDF_PAGE_SYNC 尚未到達)
+                // 注意：由於 Lazy Loading，pdfImages 可能包含 null，這裡僅作已渲染頁面的比對
                 const currentSrc = bg.getSrc();
+                const pageIdx = pdfImages.indexOf(currentSrc);
+                if (pageIdx !== -1 && pageIdx !== currentPdfPage) {
+                    currentPdfPage = pageIdx;
+                    hostPdfPage = pageIdx; // 假設全量更新來自房主當前頁面
+                    document.getElementById('pdf-page-indicator').innerText = `${currentPdfPage + 1} / ${pdfImages.length}`;
+                    if (typeof updatePdfButtons === 'function') updatePdfButtons();
+                }
+
                 if (currentSrc !== lastPdfSrc) {
                     fitPdfToWindow(bg);
                     lastPdfSrc = currentSrc;
@@ -450,6 +485,15 @@ function handleDataReceived(data, senderConn) {
                 timestamp: lastModified,
                 settings: roomSettings
             });
+            // 若當前在 PDF 模式，發送當前頁面的影像給新訪客
+            if (currentPdfPage >= 0 && pdfImages[currentPdfPage]) {
+                senderConn.send({ 
+                    type: 'PDF_PAGE_DATA', 
+                    pageIndex: currentPdfPage,
+                    totalPages: pdfImages.length,
+                    image: pdfImages[currentPdfPage]
+                });
+            }
             if (isHost && isYoutubeActive && currentYoutubeId) {
                 senderConn.send({ type: 'YOUTUBE_START', videoId: currentYoutubeId });
                 setTimeout(() => syncYoutubeToPeer(senderConn), 2000);
@@ -460,12 +504,28 @@ function handleDataReceived(data, senderConn) {
     else if (data.type === 'CLEAR') {
         isSyncing = true;
         canvas.clear();
-        canvas.backgroundColor = "#f8f9fa";
-        canvas.setZoom(1);
-        canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+        // 使用 drawing.js 提供的重置函式，確保狀態一致 (A4 + 灰點背景)
+        if (typeof window.resetToA4 === 'function') {
+            window.resetToA4();
+        } else {
+            canvas.backgroundColor = "#f8f9fa";
+            canvas.setZoom(1);
+            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+        }
         if (isHost) localStorage.removeItem('unbound_board_state');
         if (isHost) localStorage.removeItem('unbound_last_modified');
         if (isHost) broadcast(data, senderConn);
+        isSyncing = false;
+    }
+    else if (data.type === 'CLEAR_PAGE') {
+        isSyncing = true;
+        const objects = canvas.getObjects();
+        for (let i = objects.length - 1; i >= 0; i--) {
+            if (!objects[i].isPdfBackground) {
+                canvas.remove(objects[i]);
+            }
+        }
+        canvas.requestRenderAll();
         isSyncing = false;
     }
     else if (data.type === 'KICK') {
@@ -560,11 +620,12 @@ function renderUserList() {
     const container = document.getElementById('user-list-content');
     container.innerHTML = '';
     const btnHand = document.getElementById('btn-hand');
+    
     if (raisedHands.has(myPeerId)) {
-        btnHand.innerText = "🙌 放下";
+        // if (btnHandText) btnHandText.innerText = "放下"; // 已改為純 Icon
         btnHand.classList.add('active');
     } else {
-        btnHand.innerText = "✋ 舉手";
+        // if (btnHandText) btnHandText.innerText = "舉手"; // 已改為純 Icon
         btnHand.classList.remove('active');
     }
     if (raisedHands.size > 0) {
@@ -574,7 +635,7 @@ function renderUserList() {
     }
     if (isHost && raisedHands.size > 0) {
         const lowerAllBtn = document.createElement('button');
-        lowerAllBtn.innerText = "🙌 全部放下";
+        lowerAllBtn.innerHTML = `<i data-lucide="hand"></i> <span>全部放下</span>`;
         lowerAllBtn.className = "secondary-btn";
         lowerAllBtn.style.margin = "10px";
         lowerAllBtn.style.width = "calc(100% - 20px)";
@@ -597,20 +658,21 @@ function renderUserList() {
         let html = `<span>${displayName}`;
         if (pid === targetHostId) html += `<span class="tag tag-host">房主</span>`;
         if (pid === myPeerId) html += `<span class="tag tag-me">我</span>`;
-        if (raisedHands.has(pid)) html += ` <span style="font-size:1.2em;">✋</span>`;
+        if (raisedHands.has(pid)) html += ` <i data-lucide="hand" style="width:16px;height:16px;color:#ffc107;vertical-align:middle;"></i>`;
         html += `</span>`;
         html += `<div style="display:flex; gap:5px;">`;
         if (isHost && raisedHands.has(pid)) {
             html += `<button onclick="lowerHand('${pid}')" style="font-size:0.8em; padding:2px 5px;">放下</button>`;
         }
         if (isHost && pid !== myPeerId) {
-            html += `<button onclick="transferHost('${pid}')" style="font-size:0.8em; padding:2px 5px;">👑 轉移</button>`;
-            html += `<button onclick="kickMember('${pid}')" style="font-size:0.8em; padding:2px 5px; margin-left: 5px; background-color: #dc3545; color: white; border: none; border-radius: 3px;">🚫 踢出</button>`;
+            html += `<button onclick="transferHost('${pid}')" style="font-size:0.8em; padding:2px 5px;" title="轉移房主"><i data-lucide="crown" style="width:14px;height:14px;"></i></button>`;
+            html += `<button onclick="kickMember('${pid}')" style="font-size:0.8em; padding:2px 5px; margin-left: 5px; background-color: #dc3545; color: white; border: none; border-radius: 3px;" title="踢出"><i data-lucide="ban" style="width:14px;height:14px;"></i></button>`;
         }
         html += `</div>`;
         div.innerHTML = html;
         container.appendChild(div);
     });
+    lucide.createIcons({ root: container });
 }
 
 function transferHost(newHostId) {

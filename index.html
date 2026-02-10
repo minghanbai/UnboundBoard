@@ -8,18 +8,52 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         body { margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; overflow: hidden; }
-        #toolbar { padding: 10px; background: #eee; border-bottom: 1px solid #ccc; display: none; gap: 10px; align-items: center; }
-        #status { margin-left: auto; font-size: 0.9em; color: #666; }
+        
+        /* 隱藏原始 Toolbar，但保留 ID 供 JS 邏輯控制顯示狀態 */
+        #toolbar { display: none; position: absolute; top: -9999px; visibility: hidden; }
+        
         #canvas-container { 
             flex: 1; background: #e0e0e0; position: relative; 
-            display: flex; justify-content: center; align-items: center; overflow: auto; 
+            display: flex; 
+            overflow: auto; 
         }
-        /* Fabric.js 產生的畫布容器樣式 */
-        .canvas-container { background: white; box-shadow: 0 0 15px rgba(0,0,0,0.15); margin: 20px; }
+        
+        /* 通用懸浮工具列樣式 */
+        .floating-toolbar {
+            display: none; /* 初始隱藏，透過 JS 與上方工具列同步 */
+            flex-direction: row; gap: 8px; align-items: center;
+            background: white; padding: 8px; border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100;
+            position: absolute;
+        }
 
-        button { cursor: pointer; padding: 5px 10px; }
+        /* 各區塊位置 */
+        #top-left-toolbar { top: 20px; left: 20px; }
+        #top-right-toolbar { top: 20px; right: 20px; }
+        #view-toolbar { bottom: 30px; left: 20px; }
+        #left-toolbar { bottom: 30px; left: 50%; transform: translateX(-50%); padding: 8px 15px; gap: 12px; }
+
+        /* 按鈕樣式微調 */
+        .floating-toolbar button {
+            width: 40px; height: 40px; border-radius: 8px; border: 1px solid transparent;
+            background: transparent; font-size: 1.4em; padding: 0;
+            display: flex; justify-content: center; align-items: center;
+            transition: all 0.2s ease;
+        }
+        .floating-toolbar button:hover { background: #f1f3f5; transform: scale(1.05); }
+        .floating-toolbar button.active { background: #e7f5ff; color: #007bff; border-color: #007bff; }
+        
+        /* 狀態文字樣式 */
+        #status { font-size: 0.85em; color: #666; margin-left: 5px; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+
+        /* Fabric.js 產生的畫布容器樣式 */
+        .canvas-container { background: white; box-shadow: 0 0 15px rgba(0,0,0,0.15); margin: 50px auto; }
+
+        button { cursor: pointer; padding: 5px 10px; display: inline-flex; align-items: center; gap: 5px; justify-content: center; }
+        .lucide { width: 20px; height: 20px; }
         .active { background: #007bff; color: white; border: none; }
         #overlay {
             position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -64,7 +98,7 @@
         #user-list-content { flex: 1; overflow-y: auto; padding: 0; }
         .user-item { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
         #toast-container {
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
             display: flex; flex-direction: column; gap: 10px; z-index: 2000; pointer-events: none;
         }
         .toast {
@@ -112,32 +146,51 @@
 </head>
 <body>
 
+<!-- 隱藏的原始 Toolbar，用於維持 JS 邏輯相容性 -->
 <div id="toolbar">
-    <button onclick="setMode('pencil')" id="btn-pencil">✏️ 畫筆</button>
-    <button onclick="setMode('eraser')" id="btn-eraser">🧽 橡皮擦</button>
-    <button onclick="setMode('select')" id="btn-select">🖐️ 移動/選取</button>
-    <button onclick="toggleSettings()" id="btn-settings" style="display:none;">⚙️ 設定</button>
-    <button onclick="toggleHand()" id="btn-hand">✋ 舉手</button>
-    <button onclick="toggleSidePanel('users')" id="btn-users">👥 成員</button>
-    <button onclick="toggleSidePanel('chat')" id="btn-chat">💬 聊天</button>
-    <button onclick="addStickyNote()" id="btn-note">📝 便條紙</button>
-    <button onclick="startYoutubePrompt()" id="btn-youtube">📺 YouTube</button>
-    <button onclick="document.getElementById('img-upload').click()" id="btn-img">🖼️ 上傳圖片</button>
-    <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
-    <button onclick="startPdfUpload()" id="btn-pdf">📄 上傳 PDF</button>
-    <input type="file" id="pdf-upload" accept="application/pdf" style="display: none;" onchange="handlePdfUpload(this)">
-    <button onclick="zoomCanvas(1.1)" title="放大">➕</button>
-    <button onclick="zoomCanvas(0.9)" title="縮小">➖</button>
-    <button onclick="fitCanvasToWindow()" title="適應視窗">⤢</button>
+</div>
+
+<!-- 左上：系統與檔案 -->
+<div id="top-left-toolbar" class="floating-toolbar">
+    <button onclick="toggleSettings()" id="btn-settings" style="display:none;" title="設定"><i data-lucide="settings"></i></button>
+    <button onclick="clearCanvas()" id="btn-clear" title="清空畫布"><i data-lucide="trash-2"></i></button>
+    <button onclick="copyLink()" style="color: #28a745;" title="複製分享連結"><i data-lucide="link"></i></button>
     <div id="pdf-controls" style="display:none; border-left: 1px solid #ccc; padding-left: 10px; margin-left: 10px; align-items: center; gap: 5px;">
-        <button onclick="changePdfPage(-1)" class="host-only">◀</button>
-        <span id="pdf-page-indicator" style="font-size: 0.9em; font-weight: bold; color: #333;" class="host-only"></span>
-        <button onclick="changePdfPage(1)" class="host-only">▶</button>
-        <button onclick="closePdfMode()" style="background:#dc3545; color:white; margin-left: 5px;" class="host-only">✖ 結束</button>
+        <button onclick="changePdfPage(-1)" id="btn-pdf-prev" title="上一頁"><i data-lucide="chevron-left"></i></button>
+        <span id="pdf-page-indicator" style="font-size: 0.9em; font-weight: bold; color: #333;"></span>
+        <button onclick="changePdfPage(1)" id="btn-pdf-next" title="下一頁"><i data-lucide="chevron-right"></i></button>
+        <button id="btn-return-live" onclick="returnToLive()" style="display:none; font-size: 0.8em; background: #17a2b8; color: white; border:none; border-radius: 4px; padding: 5px 10px; cursor: pointer;">回到同步</button>
+        <button onclick="closePdfMode()" style="color:#dc3545;" class="host-only" title="結束 PDF 模式"><i data-lucide="x"></i></button>
     </div>
-    <button onclick="clearCanvas()" id="btn-clear">🗑️ 清空</button>
-    <button onclick="copyLink()" style="background: #28a745; color: white; border:none;">🔗 複製分享連結</button>
     <span id="status">正在連線...</span>
+</div>
+
+<!-- 右上：協作 (舉手、成員、聊天) -->
+<div id="top-right-toolbar" class="floating-toolbar">
+    <button onclick="toggleHand()" id="btn-hand" title="舉手"><i data-lucide="hand"></i></button>
+    <button onclick="toggleSidePanel('users')" id="btn-users" title="成員列表"><i data-lucide="users"></i></button>
+    <button onclick="toggleSidePanel('chat')" id="btn-chat" title="聊天室"><i data-lucide="message-square"></i></button>
+</div>
+
+<!-- 左下：檢視 (縮放) -->
+<div id="view-toolbar" class="floating-toolbar">
+    <button onclick="zoomCanvas(1.1)" title="放大"><i data-lucide="zoom-in"></i></button>
+    <button onclick="zoomCanvas(0.9)" title="縮小"><i data-lucide="zoom-out"></i></button>
+    <button onclick="fitCanvasToWindow()" title="適應視窗"><i data-lucide="maximize"></i></button>
+</div>
+
+<!-- 下方置中：繪圖工具 -->
+<div id="left-toolbar" class="floating-toolbar">
+    <button onclick="setMode('select')" id="btn-select" title="移動/選取"><i data-lucide="mouse-pointer-2"></i></button>
+    <button onclick="setMode('pan')" id="btn-pan" title="抓手工具 (空白鍵)"><i data-lucide="grab"></i></button>
+    <button onclick="setMode('pencil')" id="btn-pencil" title="畫筆"><i data-lucide="pencil"></i></button>
+    <button onclick="setMode('eraser')" id="btn-eraser" title="橡皮擦"><i data-lucide="eraser"></i></button>
+    <button onclick="addStickyNote()" id="btn-note" title="便條紙"><i data-lucide="sticky-note"></i></button>
+    <button onclick="document.getElementById('img-upload').click()" id="btn-img" title="上傳圖片"><i data-lucide="image"></i></button>
+    <input type="file" id="img-upload" accept="image/*" style="display: none;" onchange="handleImageUpload(this)">
+    <button onclick="startPdfUpload()" id="btn-pdf" title="上傳 PDF"><i data-lucide="file-text"></i></button>
+    <input type="file" id="pdf-upload" accept="application/pdf" style="display: none;" onchange="handlePdfUpload(this)">
+    <button onclick="startYoutubePrompt()" id="btn-youtube" title="YouTube"><i data-lucide="youtube"></i></button>
 </div>
 
 <div id="canvas-container">
@@ -149,10 +202,10 @@
         <div id="yt-player"></div>
         <div id="yt-blocker" style="display:none;"></div>
         <div id="guest-yt-controls" style="display:none; position: absolute; top: -35px; right: 0; z-index: 20; align-items: center; gap: 5px;">
-            <button id="btn-guest-play" onclick="ytGuestPlay()" style="background: #28a745; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; font-weight: bold;">▶ 點此播放</button>
-            <button onclick="ytToggleMute()" style="background: #6c757d; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; font-weight: bold;">🔇 聲音</button>
+            <button id="btn-guest-play" onclick="ytGuestPlay()" style="background: #28a745; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; font-weight: bold;"><i data-lucide="play"></i> 點此播放</button>
+            <button onclick="ytToggleMute()" style="background: #6c757d; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; font-weight: bold;"><i data-lucide="volume-2"></i> 聲音</button>
         </div>
-        <button id="btn-close-yt" onclick="closeYoutube()" style="position: absolute; top: -35px; right: 0; background: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; font-weight: bold;">✖ 關閉同步</button>
+        <button id="btn-close-yt" onclick="closeYoutube()" style="position: absolute; top: -35px; right: 0; background: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; font-weight: bold;"><i data-lucide="x"></i> 關閉同步</button>
     </div>
     <div id="toast-container"></div>
     <div id="side-panel" class="hidden">
@@ -209,10 +262,38 @@
 </div>
 
 <div id="context-menu">
-    <div style="padding:8px 15px; cursor:pointer; font-size: 0.9em; color: #dc3545;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'" onclick="deleteSelectedObject()">🗑️ 刪除</div>
+    <div style="padding:8px 15px; cursor:pointer; font-size: 0.9em; color: #dc3545; display: flex; align-items: center; gap: 5px;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'" onclick="deleteSelectedObject()"><i data-lucide="trash-2" style="width:16px;height:16px;"></i> 刪除</div>
 </div>
 <script src="globals.js"></script>
 <script src="drawing.js"></script>
 <script src="connection.js"></script>
+<script>
+    // 同步所有懸浮工具列與隱藏的 #toolbar 顯示狀態
+    // 因為原本的邏輯可能會控制 #toolbar 的 display 屬性
+    const toolbar = document.getElementById('toolbar');
+    const floatingToolbars = document.querySelectorAll('.floating-toolbar');
+
+    function syncToolbars() {
+        const isVisible = getComputedStyle(toolbar).display !== 'none';
+        floatingToolbars.forEach(el => {
+            el.style.display = isVisible ? 'flex' : 'none';
+        });
+    }
+
+    if (toolbar) {
+        syncToolbars(); // 初始同步
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
+                    syncToolbars();
+                }
+            });
+        });
+        observer.observe(toolbar, { attributes: true });
+    }
+    
+    // 初始化 Lucide 圖標
+    lucide.createIcons();
+</script>
 </body>
 </html>

@@ -20,12 +20,17 @@ let raisedHands = new Set();
 let failedCandidates = new Set();
 let roomSettings = { allowRaiseHand: true, allowChat: true, allowEditing: true };
 let toastTimeout = null;
+let updateTimer = null; // 用於 sendFullSync 的防抖動計時器
 
 // --- PDF 變數 ---
 let pdfImages = [];
 let pdfCanvasStates = [];
 let currentPdfPage = -1;
+let pdfDoc = null; // PDF 文件物件 (Lazy Loading 用)
 let lastPdfSrc = null;
+let currentPdfFile = null; // 暫存 PDF 原始檔案，供新訪客同步使用
+let hostPdfPage = 0;
+let isPrivateView = false;
 
 // --- YouTube 變數 ---
 let ytPlayer = null;
